@@ -87,6 +87,8 @@ jobs:
           # Shares that arrive before the service worker runs land on the page.
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/share-target)
           [ "$code" = "303" ] || fail "POST /share-target returned $code, expected 303"
+          # ...with a relative Location, so it keeps the public host behind the proxy.
+          curl -sSI -X POST http://localhost:8080/share-target | tr -d '\r' | grep -qi '^location: /$' || fail "share-target Location is not relative"
           echo "Page, CSP header, WASM ($wasm_path, $type, $enc), manifest ($mtype), sw.js and share target all OK"
 
       - name: Stop container
