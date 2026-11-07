@@ -103,10 +103,10 @@
   <section class="wrap section" id="faq">
     <div class="section-head"><span class="label">02</span><h2>FAQ</h2><span class="rule"></span></div>
     <div class="faq">
-      <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab. Your STL is read from your disk and the fixed copy is handed straight back to you.</p></details>
-      <details><summary>Will it change the shape of my model?</summary><p>It shouldn't. Hullpatch only removes faces that can't be part of a printable solid and fills holes. If a fix would change the model's volume, it is rolled back and that part is left as it was.</p></details>
-      <details><summary>Does it work with Bambu Studio?</summary><p>Yes. Repaired files are checked against the same rules Bambu Studio uses: no open edges, no non-manifold edges and no reversed faces.</p></details>
-      <details><summary>What if my file is too broken?</summary><p>Each repair stops after 4 minutes so your browser stays responsive. A model that needs longer is usually far from a closed shape, and is better fixed by hand in your CAD tool.</p></details>
+      <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab, and the 3D view runs in the page. Your STL is read from your disk and the fixed copy is handed straight back to you. The only downloads are the site's own code.</p></details>
+      <details><summary>Will it change the shape of my model?</summary><p>Only where it has to. Holes are closed with new faces, inside walls and duplicate faces are taken out, and loose bits that are flat or under about 0.1% of the model's size are removed. Where three or more faces share an edge, that cleanup is undone if it would change the volume by more than 0.1%. When the repair finishes, the result says whether the volume changed and by how much.</p></details>
+      <details><summary>Does it work with Bambu Studio?</summary><p>That's what it's built for. After the repair, Hullpatch checks the file for the three problems Bambu Studio reports: open edges, non-manifold edges and flipped faces. If none are left it says "watertight"; if some couldn't be fixed safely it says "partly repaired". Test files that came out watertight also passed Bambu Studio's own check.</p></details>
+      <details><summary>What if my file is too broken?</summary><p>Files up to 150 MB are accepted, and each repair stops after 4 minutes so your browser stays responsive. If a repair is stopped or comes back "partly repaired", fix the model in your CAD tool or re-export it, then try again.</p></details>
     </div>
   </section>
 </main>
