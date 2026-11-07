@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hullpatch · STL repair</title>
+  <meta name="description" content="Fix holes, inside walls, flipped faces and specks in your STL so it slices cleanly in Bambu Studio. Runs in your browser; nothing is uploaded.">
+  <meta property="og:title" content="Hullpatch · STL repair">
+  <meta property="og:description" content="Fix your STL in the browser so it slices cleanly. Nothing is uploaded.">
+  <meta name="theme-color" content="#070a18">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+<header class="site-header"><div class="wrap">
+  <a class="brand" href="/" aria-label="Hullpatch home">
+    <span class="mark" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#4cc9ff" stroke-width="1.6" stroke-linejoin="round"><path d="M10 2 17 6v8l-7 4-7-4V6z"/><path d="M6.5 10.2 9 12.6l4.6-5" stroke-linecap="round"/></svg>
+    </span>
+    HULLPATCH <span class="tv">/ townsville.cc</span>
+  </a>
+  <nav class="site-nav" aria-label="Sections">
+    <a href="#repair">Repair</a>
+    <a href="#fixes">What it fixes</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+</div></header>
+
+<main>
+  <div class="wrap hero" id="repair">
+    <div class="hero-copy">
+      <div class="kicker">STL repair · runs in your browser</div>
+      <h1>HULLPATCH</h1>
+      <div class="gold-rule"></div>
+      <p class="lead">Seal the leaks in your STL before the slicer finds them. Holes, inside walls, flipped faces and specks get fixed on your own machine, and the file stays with you.</p>
+      <ul class="chips" aria-label="Highlights">
+        <li>● Bambu Studio ready</li>
+        <li>● No upload</li>
+        <li>● Free</li>
+      </ul>
+    </div>
+
+    <section class="bay" id="fixer" aria-label="Repair bay">
+      <div class="bay-bar"><span>REPAIR BAY 01</span><span class="on">LOCAL · NO UPLOAD</span></div>
+
+      <div class="drop" id="drop">
+        <strong>DROP AN STL</strong>
+        <span>Binary or ASCII · up to 150 MB</span>
+        <label class="btn pick">Choose file
+          <input type="file" id="stl-input" accept=".stl,model/stl,application/sla,application/vnd.ms-pki.stl">
+        </label>
+      </div>
+
+      <div class="log" id="log" aria-live="polite">
+        <p class="dim cursor">waiting for a file</p>
+      </div>
+      <div class="meter" id="meter" hidden><i></i></div>
+
+      <div class="readout" id="readout" hidden>
+        <table>
+          <thead><tr><th scope="col">CHECK</th><th scope="col">BEFORE</th><th scope="col">AFTER</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="done" id="done" hidden>
+        <a class="btn btn-green" id="downloadbtn" href="#">Download fixed STL</a>
+        <small id="done-note"></small>
+      </div>
+
+      <div class="views" id="views" hidden>
+        <figure><img id="preview" alt="Model before repair, with any open edges drawn in red"><figcaption>BEFORE · RED = OPEN EDGES</figcaption></figure>
+        <figure><img id="preview2" alt="Model after repair"><figcaption>AFTER</figcaption></figure>
+      </div>
+    </section>
+  </div>
+
+  <section class="wrap section" id="fixes">
+    <div class="section-head"><span class="label">01</span><h2>WHAT GETS PATCHED</h2><span class="rule"></span></div>
+    <ul class="cards">
+      <li class="card" style="--s: var(--saber-blue)"><span class="stripe"></span><h3>HOLES</h3><p>Open edges are closed flat where they can be, and with a fan where they can't. Zero-width slivers are stitched into the face next to them.</p></li>
+      <li class="card" style="--s: var(--saber-red)"><span class="stripe"></span><h3>INSIDE WALLS</h3><p>Paper-thin walls left where parts were joined are taken out, so every edge is shared by exactly two faces.</p></li>
+      <li class="card" style="--s: var(--saber-teal)"><span class="stripe"></span><h3>FLIPPED FACES</h3><p>Faces are turned to point outward, and cavities inward, so the slicer knows what's solid.</p></li>
+      <li class="card" style="--s: var(--saber-purple)"><span class="stripe"></span><h3>SPECKS</h3><p>Flat or tiny loose bits that can't print are removed. The real parts are kept.</p></li>
+    </ul>
+  </section>
+
+  <section class="wrap section" id="faq">
+    <div class="section-head"><span class="label">02</span><h2>FAQ</h2><span class="rule"></span></div>
+    <div class="faq">
+      <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab. Your STL is read from your disk and the fixed copy is handed straight back to you.</p></details>
+      <details><summary>Will it change the shape of my model?</summary><p>It shouldn't. Hullpatch only removes faces that can't be part of a printable solid and fills holes. If a fix would change the model's volume, it is rolled back and that part is left as it was.</p></details>
+      <details><summary>Does it work with Bambu Studio?</summary><p>Yes. Repaired files are checked against the same rules Bambu Studio uses: no open edges, no non-manifold edges and no reversed faces.</p></details>
+      <details><summary>What if my file is too broken?</summary><p>Each repair stops after 4 minutes so your browser stays responsive. A model that needs longer is usually far from a closed shape, and is better fixed by hand in your CAD tool.</p></details>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer"><div class="wrap">
+  <span>HULLPATCH · part of <a href="https://townsville.cc">townsville<span class="dotcc">.cc</span></a></span>
+  <span>Your file never leaves this tab.</span>
+</div></footer>
+</body>
+</html>

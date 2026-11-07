@@ -1,0 +1,18 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor / tooling
+.vscode/
+.idea/
+.claude/
+
+# Test meshes
+*.stl
+*.3mf
