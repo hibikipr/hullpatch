@@ -21,11 +21,14 @@
     <img class="mark" src="/mark-72.png" width="36" height="36" alt="" aria-hidden="true">
     HULLPATCH <span class="tv">/ townsville.cc</span>
   </a>
-  <nav class="site-nav" aria-label="Sections">
-    <a href="#repair">Repair</a>
-    <a href="#fixes">What it fixes</a>
-    <a href="#faq">FAQ</a>
-  </nav>
+  <div class="header-actions">
+    <nav class="site-nav" aria-label="Sections">
+      <a href="#repair">Repair</a>
+      <a href="#fixes">What it fixes</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <button type="button" class="install-app" id="install-app" hidden title="Install Hullpatch as an app: it opens in its own window and works offline">Install app</button>
+  </div>
 </div></header>
 
 <main>
@@ -120,6 +123,7 @@
       <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab, and the 3D view runs in the page. Your STL is read from your disk and the fixed copy is handed straight back to you. The only downloads are the site's own code.</p></details>
       <details><summary>Will it change the shape of my model?</summary><p>Only where it has to. Holes are closed with new faces, inside walls and duplicate faces are taken out, and loose bits that are flat or under about 0.1% of the model's size are removed. Where three or more faces share an edge, that cleanup is undone if it would change the volume by more than 0.1%. When the repair finishes, the result says whether the volume changed and by how much.</p></details>
       <details><summary>Does it work with Bambu Studio?</summary><p>That's what it's built for. After the repair, Hullpatch checks the file for the three problems Bambu Studio reports: open edges, non-manifold edges and flipped faces. If none are left it says "watertight"; if some couldn't be fixed safely it says "partly repaired". Test files that came out watertight also passed Bambu Studio's own check.</p></details>
+      <details><summary>Can I install it as an app?</summary><p>Yes. In Chrome or Edge, use the Install app button at the top of the page (or the install icon in the address bar); on Android, "Add to Home screen"; in Safari, Share → "Add to Dock" or "Add to Home Screen". The installed app opens in its own window and works offline once it has been opened once; the 3D view works offline after your first repair. In Chrome and Edge on a computer you can open .stl files with it, and on Android you can share an .stl to it.</p></details>
       <details><summary>What if my file is too broken?</summary><p>Files up to 150 MB are accepted, and each repair stops after 4 minutes so your browser stays responsive. If a repair is stopped or comes back "partly repaired", fix the model in your CAD tool or re-export it, then try again.</p></details>
     </div>
   </section>

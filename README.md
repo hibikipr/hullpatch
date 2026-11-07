@@ -12,6 +12,10 @@ non-manifold edge or duplicate, purple where flipped. Problems too small to see 
 get a marker in their colour. **See inside** makes the healthy surface see-through,
 so inside walls hidden in the model show up.
 
+Hullpatch can be installed as an app (Install app button in Chrome and Edge, Add to
+Home Screen / Dock in Safari). Installed, it works offline, opens `.stl` files from
+the desktop (Chrome and Edge) and takes `.stl` files shared to it on Android.
+
 ## Run with Docker
 
 ```bash
@@ -53,6 +57,13 @@ npm run test:repair # repair engine tests
   The coloured Before model is a binary PLY with a colour and alpha per face, built in
   the page from the flags `problemFaces()` in `mesh.js` returns, and shown with F3D's
   `model.coloring=direct` on cell data.
+- `src/app.js`: installed-app features: registers the service worker, shows the
+  Install app button, and passes files opened with or shared to the app to the bay.
+- `src/sw.js`: the service worker. `vite.config.js` writes it to `/sw.js` with the
+  build's file list. The page, scripts, styles and Latin fonts are cached on install;
+  F3D is cached the first time it loads. Pages are network-first, hashed assets
+  cache-first. Shared files arrive as a POST to `/share-target`.
+- `public/site.webmanifest`: app name, icons, `.stl` file handler and share target.
 - `Dockerfile`, `docker/`: Node build stage, then non-root nginx with gzip,
   long-lived caching for hashed assets, security headers and `/healthz`.
 - `scripts/test-repair.mjs`: builds broken meshes and checks the repair fixes them.
