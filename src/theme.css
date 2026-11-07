@@ -63,9 +63,8 @@ a:hover { color: var(--link-hover); }
 .site-header .wrap { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding-top: 24px; padding-bottom: 24px; }
 .brand { display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--display); font-size: 14px; letter-spacing: .18em; }
 .brand:hover { color: var(--ink); }
-.brand .mark { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
-  background: linear-gradient(135deg, rgba(76,201,255,.25), rgba(76,201,255,.05)); border: 1px solid rgba(76,201,255,.5);
-  box-shadow: 0 0 18px rgba(76,201,255,.35); }
+.brand .mark { width: 36px; height: 36px; border-radius: 9px; display: block; flex: none;
+  border: 1px solid rgba(76,201,255,.5); box-shadow: 0 0 18px rgba(76,201,255,.35); }
 .brand .tv { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .12em; }
 .site-nav { display: flex; gap: 26px; flex-wrap: wrap; }
 .site-nav a { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--body); }
