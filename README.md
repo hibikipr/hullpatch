@@ -46,6 +46,9 @@ npm run test:repair # repair engine tests
 - `src/repair/tool.js`: the repair bay UI (log, readout, download, previews).
 - `src/repair/viewer.js`: the F3D 3D view. F3D is ~12 MB gzipped, so it is only
   fetched once a repair starts. Without WebGL 2 the page shows flat pictures instead.
+  The coloured Before model is a binary PLY with a colour and alpha per face, built in
+  the page from the flags `problemFaces()` in `mesh.js` returns, and shown with F3D's
+  `model.coloring=direct` on cell data.
 - `Dockerfile`, `docker/`: Node build stage, then non-root nginx with gzip,
   long-lived caching for hashed assets, security headers and `/healthz`.
 - `scripts/test-repair.mjs`: builds broken meshes and checks the repair fixes them.

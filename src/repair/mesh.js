@@ -327,7 +327,7 @@ function orient(verts, faces, V) {
     }
     if (flip[f]) flipped++;
   }
-  return { faces: out, flipped };
+  return { faces: out, flipped, flip };
 }
 
 function signedVolume(verts, a, b, c) {
@@ -770,6 +770,43 @@ export function toTriangles(mesh, maxTris = 250000) {
     }
   }
   return out.subarray(0, o);
+}
+
+export const PROBLEM_OPEN = 1;   // touches an edge used by only one face (a hole)
+export const PROBLEM_WALL = 2;   // touches an edge shared by 3+ faces, or is a duplicate face
+export const PROBLEM_FLIPPED = 4; // wound the wrong way round
+
+/**
+ * One flag byte per face saying which problems it takes part in, for colouring
+ * the "before" model. The same rules as analyze(), but per face instead of a count.
+ */
+export function problemFaces(mesh) {
+  const { verts, faces, vCount } = mesh;
+  const F = faces.length / 3;
+  const flags = new Uint8Array(F);
+
+  const { head, next } = buildEdges(faces, vCount);
+  for (const he0 of head.values()) {
+    let c = 0;
+    for (let he = he0; he !== -1; he = next[he]) c++;
+    if (c === 2) continue;
+    const bit = c === 1 ? PROBLEM_OPEN : PROBLEM_WALL;
+    for (let he = he0; he !== -1; he = next[he]) flags[(he / 3) | 0] |= bit;
+  }
+
+  // Every face in a group that shares the same three corners (both copies of a
+  // duplicate, both sides of a paper-thin wall).
+  const first = new Map();
+  for (let f = 0; f < F; f++) {
+    const k = sortedTriKey(faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
+    const g = first.get(k);
+    if (g === undefined) first.set(k, f);
+    else { flags[f] |= PROBLEM_WALL; flags[g] |= PROBLEM_WALL; }
+  }
+
+  const { flip } = orient(verts, faces, vCount);
+  for (let f = 0; f < F; f++) if (flip[f]) flags[f] |= PROBLEM_FLIPPED;
+  return flags;
 }
 
 /** Segments of edges that belong to only one face (holes), for the "before" preview. */

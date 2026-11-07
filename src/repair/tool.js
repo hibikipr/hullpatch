@@ -1,5 +1,5 @@
 // The repair bay: drop zone, live log, before/after readout, download and 3D view.
-import { preloadViewer, createViewer } from './viewer.js';
+import { preloadViewer, createViewer, problemPly, problemCounts, PROBLEM_COLOURS } from './viewer.js';
 
 const MAX_BYTES = 150 * 1024 * 1024;
 const TIMEOUT_MS = 4 * 60 * 1000;
@@ -41,6 +41,27 @@ export function initRepairTool(root) {
   let viewer = null;
   let models = { before: null, after: null }; // () => Promise<ArrayBuffer>
   let shown = null;
+  // The original mesh with a problem flag per face, from the worker: the "before"
+  // view is drawn from this so problem faces can be coloured.
+  let problems = null;
+  let seeInside = false;
+  const seeButton = document.getElementById('see-inside');
+  const legend = document.getElementById('viewer-legend');
+
+  const rgb = (c) => `rgb(${c.join(',')})`;
+  function updateLegend(which) {
+    if (which !== 'before' || !problems) { legend.hidden = true; return; }
+    const { open, wall, flipped } = problems.counts;
+    const items = [
+      [open, PROBLEM_COLOURS.open, 'at an open edge'],
+      [wall, PROBLEM_COLOURS.wall, 'at a non-manifold edge or duplicate'],
+      [flipped, PROBLEM_COLOURS.flipped, 'flipped'],
+    ].filter(([n]) => n > 0);
+    legend.innerHTML = items.length
+      ? items.map(([n, c, label]) => `<li><i style="--c:${rgb(c)}"></i>${label} <span class="dim">${fmt(n)} triangles</span></li>`).join('')
+      : `<li><i style="--c:${rgb(PROBLEM_COLOURS.ok)}"></i>no problem triangles</li>`;
+    legend.hidden = false;
+  }
 
   function useFallbackPictures(reason) {
     viewerBox.hidden = true;
@@ -48,7 +69,7 @@ export function initRepairTool(root) {
     if (reason) console.warn('3D view unavailable, showing pictures instead:', reason);
   }
 
-  async function showModel(which) {
+  async function showModel(which, keepCamera = false) {
     if (!models[which]) return;
     modelButtons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.model === which)));
     shown = which;
@@ -56,9 +77,12 @@ export function initRepairTool(root) {
     viewerStatus.textContent = viewer ? 'loading model…' : 'loading 3D viewer…';
     try {
       viewer = viewer || await createViewer(canvas);
-      const bytes = await models[which]();
+      // "Before" with problems coloured, when the worker sent them; else the file as it is.
+      const coloured = which === 'before' && problems;
+      const bytes = coloured ? problemPly(problems, seeInside) : await models[which]();
       if (shown !== which) return; // the other button was pressed meanwhile
-      viewer.show(bytes);
+      viewer.show(bytes, { format: coloured ? 'ply' : 'stl', seeThrough: seeInside, keepCamera });
+      updateLegend(which);
       viewerStatus.hidden = true;
     } catch (err) {
       useFallbackPictures(err);
@@ -66,6 +90,11 @@ export function initRepairTool(root) {
   }
 
   modelButtons.forEach((b) => b.addEventListener('click', () => showModel(b.dataset.model)));
+  seeButton.addEventListener('click', () => {
+    seeInside = !seeInside;
+    seeButton.setAttribute('aria-pressed', String(seeInside));
+    if (shown) showModel(shown, true);
+  });
 
   const line = (html, cls = '') => {
     log.querySelectorAll('.cursor').forEach((el) => el.classList.remove('cursor'));
@@ -80,6 +109,7 @@ export function initRepairTool(root) {
     log.innerHTML = '';
     meter.hidden = readout.hidden = done.hidden = views.hidden = viewerBox.hidden = true;
     models = { before: null, after: null };
+    problems = null;
     bar.style.width = '0';
     progress = 0;
   }
@@ -135,10 +165,11 @@ export function initRepairTool(root) {
     if (d.type === 'stage' && d.stage === 'scan') line('scanning…');
     if (d.type === 'analysis') {
       const a = d.analysis;
-      const problems = CHECKS.reduce((s, [k]) => s + a[k], 0);
-      line(`scan: ${fmt(a.FaceCount)} triangles · ${problems ? `<span class="bad">${fmt(problems)}</span> problems` : '<span class="ok">no problems found</span>'}`);
+      const total = CHECKS.reduce((s, [k]) => s + a[k], 0);
+      line(`scan: ${fmt(a.FaceCount)} triangles · ${total ? `<span class="bad">${fmt(total)}</span> problems` : '<span class="ok">no problems found</span>'}`);
       showReadout(a, null);
       drawPreview($('#preview'), d.before, d.holes);
+      if (d.problems) problems = { ...d.problems, counts: problemCounts(d.problems.flags) };
     }
     if (d.type === 'stage' && d.stage === 'repair') {
       repairLine = line('patching: 0%');
