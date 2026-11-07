@@ -80,7 +80,14 @@ jobs:
           # ...without changing any other file's type.
           itype=$(curl -fsSI http://localhost:8080/favicon.ico | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2}')
           [ "$itype" = "image/x-icon" ] || fail "favicon served as '$itype', expected image/x-icon"
-          echo "Page, CSP header, WASM ($wasm_path, $type, $enc) and manifest ($mtype) all OK"
+          # The service worker must be served as JavaScript and never cached by the browser.
+          sw_headers=$(curl -fsSI http://localhost:8080/sw.js | tr -d '\r') || fail "GET /sw.js failed"
+          echo "$sw_headers" | grep -qi '^content-type: .*javascript' || fail "sw.js not served as JavaScript"
+          echo "$sw_headers" | grep -qi '^cache-control: no-cache' || fail "sw.js missing Cache-Control: no-cache"
+          # Shares that arrive before the service worker runs land on the page.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/share-target)
+          [ "$code" = "303" ] || fail "POST /share-target returned $code, expected 303"
+          echo "Page, CSP header, WASM ($wasm_path, $type, $enc), manifest ($mtype), sw.js and share target all OK"
 
       - name: Stop container
         if: always()

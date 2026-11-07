@@ -69,6 +69,12 @@ a:hover { color: var(--link-hover); }
 .site-nav { display: flex; gap: 26px; flex-wrap: wrap; }
 .site-nav a { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--body); }
 .site-nav a:hover { color: var(--saber-blue); }
+.header-actions { display: flex; align-items: center; gap: 26px; }
+/* Only shown when the browser offers to install the app (see src/app.js). */
+.install-app { border: 1px solid var(--saber-blue); background: rgba(76,201,255,.08); color: var(--saber-blue); cursor: pointer;
+  padding: 7px 14px; border-radius: 999px; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+.install-app:hover, .install-app:focus-visible { background: rgba(76,201,255,.18); box-shadow: 0 0 14px rgba(76,201,255,.3); outline: none; }
+.install-app[hidden] { display: none; }
 
 /* ---- Hero ---- */
 /* Phone: copy, bay, 3D view stacked. Desktop: copy and the 3D view share the left

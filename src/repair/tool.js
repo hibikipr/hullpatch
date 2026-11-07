@@ -235,6 +235,9 @@ export function initRepairTool(root) {
     drop.classList.remove('dragging');
     start(e.dataTransfer.files[0]);
   });
+
+  // For files that arrive another way (opened from the desktop or shared to the app).
+  return { open: start };
 }
 
 /* ------------------------------------------------------------------ */
