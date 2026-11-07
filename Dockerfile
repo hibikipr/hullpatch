@@ -2,7 +2,7 @@
 
 # ---- Build: the site is plain static files, so build once on the runner's own
 # architecture (no QEMU) and copy the result into every platform's image.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS build
+FROM --platform=$BUILDPLATFORM node:25-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
