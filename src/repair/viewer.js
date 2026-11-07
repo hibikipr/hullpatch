@@ -207,11 +207,7 @@ export async function createViewer(canvas) {
         win.render();
         camera.state = saved;
       } else {
-        // Same three-quarter view as the preview pictures.
-        const f = camera.focalPoint;
-        camera.position = [f[0] + 1, f[1] - 1, f[2] + 0.6];
-        camera.viewUp = [0, 0, 1];
-        camera.resetToBounds(0.9);
+        frame('3d');
         framed = true;
       }
       fit();
@@ -220,8 +216,42 @@ export async function createViewer(canvas) {
         started = true;
       }
     },
+    /** Move the camera closer (step > 1) or further away (step < 1). */
+    zoom(step) {
+      win.getCamera().dolly(step);
+      win.render();
+    },
+    /** Frame the whole model again, keeping the current viewing direction. */
+    fitView() {
+      win.getCamera().resetToBounds(0.9);
+      win.render();
+    },
+    /** Look from a preset direction: '3d', 'top', 'front' or 'side'. */
+    look(view) {
+      frame(view);
+      win.render();
+    },
     dispose() {
       observer.disconnect();
     },
   };
+
+  /** Point the camera at the model from a preset direction and fit it in view. */
+  function frame(view) {
+    const [dir, up] = VIEWS[view] || VIEWS['3d'];
+    const camera = win.getCamera();
+    const f = camera.focalPoint;
+    camera.position = [f[0] + dir[0], f[1] + dir[1], f[2] + dir[2]];
+    camera.viewUp = up;
+    camera.resetToBounds(0.9);
+  }
 }
+
+// Preset views for a Z-up model: [direction from the model to the camera, up].
+// '3d' is the same three-quarter view as the preview pictures.
+const VIEWS = {
+  '3d': [[1, -1, 0.6], [0, 0, 1]],
+  top: [[0, 0, 1], [0, 1, 0]],
+  front: [[0, -1, 0], [0, 0, 1]],
+  side: [[1, 0, 0], [0, 0, 1]],
+};

@@ -90,6 +90,15 @@ export function initRepairTool(root) {
   }
 
   modelButtons.forEach((b) => b.addEventListener('click', () => showModel(b.dataset.model)));
+  // Camera buttons over the 3D view.
+  viewerBox.querySelector('.view-controls').addEventListener('click', (e) => {
+    const action = e.target.closest('[data-cam]')?.dataset.cam;
+    if (!action || !viewer) return;
+    if (action === 'zoom-in') viewer.zoom(1.25);
+    else if (action === 'zoom-out') viewer.zoom(0.8);
+    else if (action === 'fit') viewer.fitView();
+    else viewer.look(action);
+  });
   seeButton.addEventListener('click', () => {
     seeInside = !seeInside;
     seeButton.setAttribute('aria-pressed', String(seeInside));
