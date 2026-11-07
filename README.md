@@ -7,6 +7,10 @@ in Bambu Studio. Nothing is uploaded: the repair runs in a Web Worker in the tab
 
 The result opens in an interactive 3D view powered by [F3D](https://f3d.app)'s
 WebAssembly build (the same viewer Manyfold uses), with a Before/After toggle.
+The Before view colours every triangle at a problem: red at an open edge, amber at a
+non-manifold edge or duplicate, purple where flipped. Problems too small to see also
+get a marker in their colour. **See inside** makes the healthy surface see-through,
+so inside walls hidden in the model show up.
 
 ## Run with Docker
 
