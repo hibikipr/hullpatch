@@ -88,6 +88,16 @@
       <div class="viewer-stage">
         <canvas id="f3d-canvas" tabindex="0" aria-label="Interactive 3D view of the model"></canvas>
         <p class="viewer-status" id="viewer-status">loading 3D viewer…</p>
+        <div class="view-controls" role="toolbar" aria-label="View controls">
+          <button type="button" data-cam="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button type="button" data-cam="zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+          <button type="button" data-cam="fit" title="Fit the whole model in view">Fit</button>
+          <span class="sep" aria-hidden="true"></span>
+          <button type="button" data-cam="3d" title="Three-quarter view">3D</button>
+          <button type="button" data-cam="top" title="View from the top">Top</button>
+          <button type="button" data-cam="front" title="View from the front">Front</button>
+          <button type="button" data-cam="side" title="View from the side">Side</button>
+        </div>
       </div>
       <ul class="viewer-legend" id="viewer-legend" aria-label="Colour key" hidden></ul>
       <p class="viewer-credit">3D view by <a href="https://f3d.app" rel="noopener">F3D</a></p>
