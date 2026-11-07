@@ -1,0 +1,13 @@
+.git
+.github
+.gitignore
+node_modules
+dist
+*.stl
+*.3mf
+.DS_Store
+.idea/
+.vscode/
+.claude/
+README.md
+docker-compose.yml

@@ -1,0 +1,18 @@
+services:
+  hullpatch:
+    image: ghcr.io/hibikipr/hullpatch:latest
+    # Or build from this checkout instead:
+    # build: .
+    container_name: hullpatch
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    # Stateless: no volumes or settings needed. Files are repaired in the
+    # visitor's browser and never reach the container.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

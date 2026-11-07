@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # package.json: vite, f3d and the fonts.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+    labels: ["dependencies", "javascript"]
+
+  # Actions used in .github/workflows/*.yml (actions/checkout, docker/*, etc).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    labels: ["dependencies", "github-actions"]
+
+  # The node and nginx base images in Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
