@@ -82,12 +82,14 @@
           <button type="button" data-model="after" aria-pressed="true">After</button>
           <button type="button" data-model="before" aria-pressed="false">Before</button>
         </div>
+        <button type="button" class="see-inside" id="see-inside" aria-pressed="false" title="Make the model see-through, to show walls and holes hidden inside">See inside</button>
         <span class="viewer-hint">drag to orbit · scroll to zoom</span>
       </div>
       <div class="viewer-stage">
         <canvas id="f3d-canvas" tabindex="0" aria-label="Interactive 3D view of the model"></canvas>
         <p class="viewer-status" id="viewer-status">loading 3D viewer…</p>
       </div>
+      <ul class="viewer-legend" id="viewer-legend" aria-label="Colour key" hidden></ul>
       <p class="viewer-credit">3D view by <a href="https://f3d.app" rel="noopener">F3D</a></p>
     </div>
   </div>

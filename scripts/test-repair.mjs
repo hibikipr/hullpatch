@@ -1,5 +1,5 @@
 // Builds deliberately broken meshes and checks the repair engine fixes them.
-import { parseStl, weld, analyze, repair, writeStl } from '../src/repair/mesh.js';
+import { parseStl, weld, analyze, repair, writeStl, problemFaces, PROBLEM_OPEN, PROBLEM_WALL, PROBLEM_FLIPPED } from '../src/repair/mesh.js';
 
 const CUBE = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]];
 const corners = (x0, y0, z0, s) => [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]]
@@ -51,6 +51,11 @@ const check = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); 
   t.push([4,4,6]);    // degenerate face
   const mesh = weld(parseStl(toStl(t.map((tri) => tri.map((i) => P[i])))));
   const a = analyze(mesh);
+  // Per-face flags for the coloured "before" view: the four faces along the hole,
+  // the flipped bottom face, and both copies of the duplicate top face.
+  const flags = problemFaces(mesh);
+  const openFaces = flags.reduce((n, f) => n + (f & PROBLEM_OPEN ? 1 : 0), 0);
+  check('broken cube: problem faces flagged', openFaces === 4 && (flags[0] & PROBLEM_FLIPPED) && (flags[2] & PROBLEM_WALL) && (flags[10] & PROBLEM_WALL) && !(flags[5] & PROBLEM_FLIPPED));
   const fixed = repair(mesh);
   const out = writeStl(fixed);
   const b = analyze(weld(parseStl(out)));

@@ -7,6 +7,10 @@ in Bambu Studio. Nothing is uploaded: the repair runs in a Web Worker in the tab
 
 The result opens in an interactive 3D view powered by [F3D](https://f3d.app)'s
 WebAssembly build (the same viewer Manyfold uses), with a Before/After toggle.
+The Before view colours every triangle at a problem: red at an open edge, amber at a
+non-manifold edge or duplicate, purple where flipped. Problems too small to see also
+get a marker in their colour. **See inside** makes the healthy surface see-through,
+so inside walls hidden in the model show up.
 
 ## Run with Docker
 
@@ -46,6 +50,9 @@ npm run test:repair # repair engine tests
 - `src/repair/tool.js`: the repair bay UI (log, readout, download, previews).
 - `src/repair/viewer.js`: the F3D 3D view. F3D is ~12 MB gzipped, so it is only
   fetched once a repair starts. Without WebGL 2 the page shows flat pictures instead.
+  The coloured Before model is a binary PLY with a colour and alpha per face, built in
+  the page from the flags `problemFaces()` in `mesh.js` returns, and shown with F3D's
+  `model.coloring=direct` on cell data.
 - `Dockerfile`, `docker/`: Node build stage, then non-root nginx with gzip,
   long-lived caching for hashed assets, security headers and `/healthz`.
 - `scripts/test-repair.mjs`: builds broken meshes and checks the repair fixes them.
