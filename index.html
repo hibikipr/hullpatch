@@ -73,6 +73,21 @@
         <figure><img id="preview2" alt="Model after repair"><figcaption>AFTER</figcaption></figure>
       </div>
     </section>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="viewer-bar">
+        <div class="seg" role="group" aria-label="Which model to show">
+          <button type="button" data-model="after" aria-pressed="true">After</button>
+          <button type="button" data-model="before" aria-pressed="false">Before</button>
+        </div>
+        <span class="viewer-hint">drag to orbit · scroll to zoom</span>
+      </div>
+      <div class="viewer-stage">
+        <canvas id="f3d-canvas" tabindex="0" aria-label="Interactive 3D view of the model"></canvas>
+        <p class="viewer-status" id="viewer-status">loading 3D viewer…</p>
+      </div>
+      <p class="viewer-credit">3D view by <a href="https://f3d.app" rel="noopener">F3D</a></p>
+    </div>
   </div>
 
   <section class="wrap section" id="fixes">

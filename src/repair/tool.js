@@ -1,4 +1,5 @@
-// The repair bay: drop zone, live log, before/after readout, download and preview pictures.
+// The repair bay: drop zone, live log, before/after readout, download and 3D view.
+import { preloadViewer, createViewer } from './viewer.js';
 
 const MAX_BYTES = 150 * 1024 * 1024;
 const TIMEOUT_MS = 4 * 60 * 1000;
@@ -26,10 +27,45 @@ export function initRepairTool(root) {
   const done = $('#done');
   const download = $('#downloadbtn');
   const views = $('#views');
+  // The 3D view sits beside the bay (in the hero's left column), not inside it.
+  const viewerBox = document.getElementById('viewer');
+  const canvas = document.getElementById('f3d-canvas');
+  const viewerStatus = document.getElementById('viewer-status');
+  const modelButtons = [...viewerBox.querySelectorAll('[data-model]')];
   let worker = null;
   let timer = null;
   let downloadUrl = null;
   let progress = 0;
+
+  // The 3D view: created once, then fed the original or repaired file on demand.
+  let viewer = null;
+  let models = { before: null, after: null }; // () => Promise<ArrayBuffer>
+  let shown = null;
+
+  function useFallbackPictures(reason) {
+    viewerBox.hidden = true;
+    views.hidden = false;
+    if (reason) console.warn('3D view unavailable, showing pictures instead:', reason);
+  }
+
+  async function showModel(which) {
+    if (!models[which]) return;
+    modelButtons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.model === which)));
+    shown = which;
+    viewerStatus.hidden = false;
+    viewerStatus.textContent = viewer ? 'loading model…' : 'loading 3D viewer…';
+    try {
+      viewer = viewer || await createViewer(canvas);
+      const bytes = await models[which]();
+      if (shown !== which) return; // the other button was pressed meanwhile
+      viewer.show(bytes);
+      viewerStatus.hidden = true;
+    } catch (err) {
+      useFallbackPictures(err);
+    }
+  }
+
+  modelButtons.forEach((b) => b.addEventListener('click', () => showModel(b.dataset.model)));
 
   const line = (html, cls = '') => {
     log.querySelectorAll('.cursor').forEach((el) => el.classList.remove('cursor'));
@@ -42,7 +78,8 @@ export function initRepairTool(root) {
 
   function reset() {
     log.innerHTML = '';
-    meter.hidden = readout.hidden = done.hidden = views.hidden = true;
+    meter.hidden = readout.hidden = done.hidden = views.hidden = viewerBox.hidden = true;
+    models = { before: null, after: null };
     bar.style.width = '0';
     progress = 0;
   }
@@ -78,6 +115,9 @@ export function initRepairTool(root) {
     if (!/\.stl$/i.test(file.name)) return void line('<span class="bad">that isn\'t an .stl file</span>');
     if (file.size > MAX_BYTES) return void line('<span class="bad">files up to 150 MB only:</span> reduce the mesh first');
     line(`<span class="n">${esc(file.name)}</span> <span class="dim">· ${(file.size / 1048576).toFixed(1)} MB</span>`);
+    models.before = () => file.arrayBuffer();
+    // Fetch the 3D viewer while the repair runs, so it's ready when the result is.
+    preloadViewer(canvas).catch(() => {});
 
     file.arrayBuffer().then((buffer) => {
       worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -123,7 +163,9 @@ export function initRepairTool(root) {
       showReadout(d.before, a);
 
       if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-      downloadUrl = URL.createObjectURL(new Blob([d.stl], { type: 'model/stl' }));
+      const fixedBlob = new Blob([d.stl], { type: 'model/stl' });
+      downloadUrl = URL.createObjectURL(fixedBlob);
+      models.after = () => fixedBlob.arrayBuffer();
       const outName = name.replace(/\.stl$/i, '') + '_fixed.stl';
       download.href = downloadUrl;
       download.download = outName;
@@ -131,7 +173,12 @@ export function initRepairTool(root) {
       $('#done-note').textContent = dv < 1e-4 ? 'volume unchanged' : `volume changed ${(dv * 100).toFixed(2)}%`;
       done.hidden = false;
       drawPreview($('#preview2'), d.afterTris, null);
-      views.hidden = false;
+      if (typeof WebAssembly === 'object' && document.createElement('canvas').getContext('webgl2')) {
+        viewerBox.hidden = false;
+        showModel('after');
+      } else {
+        useFallbackPictures('no WebAssembly or WebGL 2');
+      }
     }
   }
 

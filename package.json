@@ -2,6 +2,12 @@
   "name": "hullpatch",
   "private": true,
   "version": "1.0.0",
+  "description": "In-browser STL repair that makes files slice cleanly in Bambu Studio",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hibikipr/hullpatch.git"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build",
@@ -13,6 +19,7 @@
   "dependencies": {
     "@fontsource/chakra-petch": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
-    "@fontsource/michroma": "^5.3.0"
+    "@fontsource/michroma": "^5.3.0",
+    "f3d": "4.0.1"
   }
 }
