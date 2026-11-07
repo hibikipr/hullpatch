@@ -18,7 +18,7 @@ FROM nginxinc/nginx-unprivileged:stable-alpine
 # this layer re-run instead of being served from the build cache forever; CI
 # passes the build date so each day's first build picks up new patches.
 ARG CACHE_BUST=dev
-USER root
+USER 0
 RUN echo "apk cache bust: ${CACHE_BUST}" && apk upgrade --no-cache
 
 # Set from the release git tag (see .github/workflows/docker-publish.yml);
@@ -39,4 +39,4 @@ USER 101
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+  CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
