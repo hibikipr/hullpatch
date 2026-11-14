@@ -14,7 +14,7 @@
     "test:repair": "node scripts/test-repair.mjs"
   },
   "devDependencies": {
-    "vite": "^8.3.5"
+    "vite": "^8.3.7"
   },
   "dependencies": {
     "@fontsource/chakra-petch": "^5.3.0",
