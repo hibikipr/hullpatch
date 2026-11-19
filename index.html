@@ -52,7 +52,7 @@
         <strong>DROP AN STL</strong>
         <span>Binary or ASCII · up to 150 MB</span>
         <label class="btn pick">Choose file
-          <input type="file" id="stl-input" accept=".stl,model/stl,application/sla,application/vnd.ms-pki.stl">
+          <input type="file" id="stl-input" accept=".stl,.3mf,model/stl,application/sla,application/vnd.ms-pki.stl,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml">
         </label>
       </div>
 
@@ -60,6 +60,17 @@
         <p class="dim cursor">waiting for a file</p>
       </div>
       <div class="meter" id="meter" hidden><i></i></div>
+
+      <div class="picker" id="picker" hidden>
+        <fieldset>
+          <legend>Objects to repair</legend>
+          <ul id="picker-list"></ul>
+        </fieldset>
+        <div class="picker-actions">
+          <button type="button" class="btn" id="picker-go">Repair selected</button>
+          <span class="picker-sel"><button type="button" class="linkbtn" data-pick="all">All</button><button type="button" class="linkbtn" data-pick="none">None</button></span>
+        </div>
+      </div>
 
       <div class="readout" id="readout" hidden>
         <table>

@@ -767,10 +767,18 @@ export function repair(mesh, onProgress = () => {}) {
   // A surface with no consistent winding (see orient) cannot be fixed by flipping:
   // remove every face touching a conflict edge. Each side's hole then runs one way
   // and is capped on its own, which leaves an orientable closed surface.
+  // On a small model the conflicts can touch most of it; cutting would then leave little
+  // or nothing, so keep the conflicts and let the result say "partly repaired".
   const cutConflicts = (conflicts) => {
     const mark = new Uint8Array(V);
     for (const v of conflicts) mark[v] = 1;
-    keepWhere((f) => !mark[faces[f * 3]] && !mark[faces[f * 3 + 1]] && !mark[faces[f * 3 + 2]]);
+    const keep = (f) => !mark[faces[f * 3]] && !mark[faces[f * 3 + 1]] && !mark[faces[f * 3 + 2]];
+    const F = faces.length / 3;
+    let kept = 0;
+    for (let f = 0; f < F; f++) if (keep(f)) kept++;
+    if (kept * 2 < F) return false;
+    keepWhere(keep);
+    return true;
   };
   const closeHoles = (p0, p1) => {
     for (let pass = 0; pass < 3; pass++) {
@@ -836,8 +844,7 @@ export function repair(mesh, onProgress = () => {}) {
   // Orient once more with the new patches; cut and cap again if a conflict is left.
   for (let round = 0; round < 3; round++) {
     const o = reorient(allVerts());
-    if (!o.conflicts.length || round === 2) break;
-    cutConflicts(o.conflicts);
+    if (!o.conflicts.length || round === 2 || !cutConflicts(o.conflicts)) break;
     closeHoles(0.85, 0.9);
   }
   const verts = allVerts();

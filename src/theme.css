@@ -155,6 +155,29 @@ a:hover { color: var(--link-hover); }
 .done { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .done small { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
+/* Object picker (3MF files with several objects) */
+.picker { margin-top: 14px; }
+.picker fieldset { margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; min-width: 0; overflow: hidden; }
+.picker legend { padding: 0 8px; margin-left: 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.picker ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.picker li { position: relative; border-top: 1px dashed var(--line); }
+.picker li:first-child { border-top: 0; }
+.picker li input { position: absolute; left: 12px; top: 50%; width: 18px; height: 18px; margin: -9px 0 0; accent-color: var(--saber-blue); cursor: pointer; }
+.picker li label { display: flex; flex-direction: column; gap: 2px; min-height: 44px; justify-content: center; padding: 8px 12px 8px 40px; cursor: pointer; min-width: 0; }
+.picker li input:checked + label { background: rgba(76,201,255,.07); }
+.picker li input:focus-visible + label { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.picker .pname { color: var(--ink); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker .pmeta { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.picker .pmeta .bad { color: var(--saber-red); }
+.picker .pmeta .ok { color: var(--saber-green); }
+.picker-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.picker-actions .btn:disabled { opacity: .4; cursor: not-allowed; filter: none; box-shadow: none; }
+.picker-actions .btn:focus-visible, .linkbtn:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+.picker-sel { display: inline-flex; gap: 4px; }
+.linkbtn { min-height: 44px; min-width: 44px; padding: 0 10px; border: 0; background: transparent; cursor: pointer; color: var(--saber-blue);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; text-decoration: underline; text-underline-offset: 4px; }
+.linkbtn:hover { color: var(--ink); }
+
 .views { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .views figure { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: rgba(4,7,18,.6); }
 .views img { display: block; width: 100%; height: auto; }

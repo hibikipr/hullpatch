@@ -9,6 +9,7 @@ const CHECKS = [
   ['NakedEdges', 'Open edges', 'Edges used by only one triangle: the surface has a hole there.'],
   ['NonManifoldEdges', 'Non-manifold edges', 'Edges shared by three or more triangles, usually an inside wall or touching parts.'],
   ['InvertedNormals', 'Flipped faces', 'Triangles facing the wrong way, so inside and outside get mixed up.'],
+  ['OrientationConflicts', 'Winding conflicts', 'Edges where the surface twists so that no way of turning the faces makes both sides agree.'],
   ['DuplicateFaces', 'Duplicate faces', 'Triangles that use exactly the same corners as another one.'],
   ['DegenerateFaces', 'Degenerate faces', 'Triangles with no area.'],
 ];
@@ -27,6 +28,9 @@ export function initRepairTool(root) {
   const done = $('#done');
   const download = $('#downloadbtn');
   const views = $('#views');
+  const picker = $('#picker');
+  const pickList = $('#picker-list');
+  const pickGo = $('#picker-go');
   // The 3D view sits beside the bay (in the hero's left column), not inside it.
   const viewerBox = document.getElementById('viewer');
   const canvas = document.getElementById('f3d-canvas');
@@ -119,6 +123,7 @@ export function initRepairTool(root) {
     meter.hidden = readout.hidden = done.hidden = views.hidden = viewerBox.hidden = true;
     models = { before: null, after: null };
     problems = null;
+    hidePicker();
     bar.style.width = '0';
     progress = 0;
   }
@@ -127,7 +132,46 @@ export function initRepairTool(root) {
     if (worker) worker.terminate();
     worker = null;
     clearTimeout(timer);
+    hidePicker();
   }
+
+  const armTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fail('it took longer than 4 minutes, so it was stopped'), TIMEOUT_MS);
+  };
+
+  // Object picker for 3MF files with several objects.
+  function hidePicker() {
+    picker.hidden = true;
+    pickList.innerHTML = '';
+  }
+  const pickKeys = () => [...pickList.querySelectorAll('input:checked')].map((i) => i.value);
+  const syncPick = () => { pickGo.disabled = !pickKeys().length; };
+  function showPicker(objects) {
+    clearTimeout(timer); // the user may take a while: no timeout while we wait
+    pickList.innerHTML = objects.map((o, i) =>
+      `<li><input type="checkbox" id="pick-${i}" value="${esc(o.key)}"${o.problems > 0 ? ' checked' : ''}>` +
+      `<label for="pick-${i}"><span class="pname">${esc(o.name)}</span>` +
+      `<span class="pmeta">${fmt(o.triangles)} triangles · ${o.problems > 0 ? `<span class="bad">${fmt(o.problems)} problem${o.problems === 1 ? '' : 's'}</span>` : '<span class="ok">no problems</span>'}</span></label></li>`).join('');
+    syncPick();
+    picker.hidden = false;
+    pickList.querySelector('input')?.focus();
+  }
+  pickList.addEventListener('change', syncPick);
+  picker.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+    pickList.querySelectorAll('input').forEach((i) => { i.checked = b.dataset.pick === 'all'; });
+    syncPick();
+  }));
+  pickGo.addEventListener('click', () => {
+    const keys = pickKeys();
+    if (!keys.length || !worker) return;
+    const names = [...pickList.querySelectorAll('input:checked + label .pname')].map((n) => esc(n.textContent));
+    const total = pickList.children.length;
+    hidePicker();
+    line(`repairing ${keys.length} of ${total} objects${keys.length <= 3 ? ` <span class="dim">· ${names.join(', ')}</span>` : ''}`);
+    armTimer();
+    worker.postMessage({ type: 'choose', keys });
+  });
 
   function fail(message) {
     stop();
@@ -151,16 +195,17 @@ export function initRepairTool(root) {
     if (!file) return;
     stop();
     reset();
-    if (!/\.stl$/i.test(file.name)) return void line('<span class="bad">that isn\'t an .stl file</span>');
+    if (!/\.(stl|3mf)$/i.test(file.name)) return void line('<span class="bad">that isn\'t an .stl or .3mf file</span>');
     if (file.size > MAX_BYTES) return void line('<span class="bad">files up to 150 MB only:</span> reduce the mesh first');
     line(`<span class="n">${esc(file.name)}</span> <span class="dim">· ${(file.size / 1048576).toFixed(1)} MB</span>`);
+    // For 3MF the 3D views come from STL bytes the worker sends with `done`.
     models.before = () => file.arrayBuffer();
     // Fetch the 3D viewer while the repair runs, so it's ready when the result is.
     preloadViewer(canvas).catch(() => {});
 
     file.arrayBuffer().then((buffer) => {
       worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-      timer = setTimeout(() => fail('it took longer than 4 minutes, so it was stopped'), TIMEOUT_MS);
+      armTimer();
       worker.onerror = () => fail('the repair stopped unexpectedly');
       worker.onmessage = (e) => onMessage(e.data, file.name);
       worker.postMessage({ buffer, name: file.name }, [buffer]);
@@ -171,11 +216,16 @@ export function initRepairTool(root) {
   function onMessage(d, name) {
     if (d.type === 'error') return fail(d.message);
 
+    if (d.type === 'objects') {
+      line(`${d.objects.length} objects in this file · pick the ones to repair`);
+      showPicker(d.objects);
+    }
     if (d.type === 'stage' && d.stage === 'scan') line('scanning…');
     if (d.type === 'analysis') {
       const a = d.analysis;
       const total = CHECKS.reduce((s, [k]) => s + a[k], 0);
       line(`scan: ${fmt(a.FaceCount)} triangles · ${total ? `<span class="bad">${fmt(total)}</span> problems` : '<span class="ok">no problems found</span>'}`);
+      if (d.format === '3mf' && d.unit && d.unit !== 'millimeter') line(`units: ${esc(d.unit)}`, 'dim');
       showReadout(a, null);
       drawPreview($('#preview'), d.before, d.holes);
       if (d.problems) problems = { ...d.problems, counts: problemCounts(d.problems.flags) };
@@ -195,7 +245,7 @@ export function initRepairTool(root) {
       stop();
       bar.style.width = '100%';
       const a = d.after;
-      const clean = a.NakedEdges === 0 && a.NonManifoldEdges === 0 && a.InvertedNormals === 0;
+      const clean = a.NakedEdges === 0 && a.NonManifoldEdges === 0 && a.InvertedNormals === 0 && !a.OrientationConflicts;
       const dv = d.volumeBefore > 0 ? Math.abs(d.volumeAfter - d.volumeBefore) / d.volumeBefore : 0;
       line(clean
         ? `<span class="ok">watertight</span> · ${fmt(a.FaceCount)} triangles · ${(d.timeFix / 1000).toFixed(1)} s`
@@ -203,14 +253,20 @@ export function initRepairTool(root) {
       showReadout(d.before, a);
 
       if (downloadUrl) URL.revokeObjectURL(downloadUrl);
-      const fixedBlob = new Blob([d.stl], { type: 'model/stl' });
+      const is3mf = d.format === '3mf';
+      const fixedBlob = new Blob([d.stl], { type: is3mf ? 'model/3mf' : 'model/stl' });
       downloadUrl = URL.createObjectURL(fixedBlob);
-      models.after = () => fixedBlob.arrayBuffer();
-      const outName = name.replace(/\.stl$/i, '') + '_fixed.stl';
+      if (is3mf) {
+        // The download is a 3MF; the viewer wants STL bytes of the assembled model.
+        models.before = () => Promise.resolve(d.beforeStl);
+        models.after = () => Promise.resolve(d.afterStl);
+      } else models.after = () => fixedBlob.arrayBuffer();
+      const outName = name.replace(/\.(stl|3mf)$/i, '') + (is3mf ? '_fixed.3mf' : '_fixed.stl');
       download.href = downloadUrl;
       download.download = outName;
       download.textContent = 'Download ' + outName;
-      $('#done-note').textContent = dv < 1e-4 ? 'volume unchanged' : `volume changed ${(dv * 100).toFixed(2)}%`;
+      $('#done-note').textContent = (dv < 1e-4 ? 'volume unchanged' : `volume changed ${(dv * 100).toFixed(2)}%`) +
+        (d.paintLost > 0 ? ` · paint removed from ${fmt(d.paintLost)} repaired triangles` : '');
       done.hidden = false;
       drawPreview($('#preview2'), d.afterTris, null);
       if (typeof WebAssembly === 'object' && document.createElement('canvas').getContext('webgl2')) {
