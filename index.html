@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hullpatch · STL repair</title>
-  <meta name="description" content="Fix holes, inside walls, flipped faces and specks in your STL so it slices cleanly in Bambu Studio. Runs in your browser; nothing is uploaded.">
-  <meta property="og:title" content="Hullpatch · STL repair">
-  <meta property="og:description" content="Fix your STL in the browser so it slices cleanly. Nothing is uploaded.">
+  <title>Hullpatch · STL and 3MF repair</title>
+  <meta name="description" content="Fix holes, inside walls, flipped faces and specks in your STL or 3MF so it slices cleanly in Bambu Studio. Runs in your browser; nothing is uploaded.">
+  <meta property="og:title" content="Hullpatch · STL and 3MF repair">
+  <meta property="og:description" content="Fix your STL or 3MF in the browser so it slices cleanly. Nothing is uploaded.">
   <meta name="theme-color" content="#070a18">
   <meta property="og:image" content="https://stlrepair.townsville.cc/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
@@ -34,10 +34,10 @@
 <main>
   <div class="wrap hero" id="repair">
     <div class="hero-copy">
-      <div class="kicker">STL repair · runs in your browser</div>
+      <div class="kicker">STL and 3MF repair · runs in your browser</div>
       <h1>HULLPATCH</h1>
       <div class="gold-rule"></div>
-      <p class="lead">Seal the leaks in your STL before the slicer finds them. Holes, inside walls, flipped faces and specks get fixed on your own machine, and the file stays with you.</p>
+      <p class="lead">Seal the leaks in your STL or 3MF before the slicer finds them. Holes, inside walls, flipped faces and specks get fixed on your own machine, and the file stays with you.</p>
       <ul class="chips" aria-label="Highlights">
         <li>● Bambu Studio ready</li>
         <li>● No upload</li>
@@ -49,8 +49,8 @@
       <div class="bay-bar"><span>REPAIR BAY 01</span><span class="on">LOCAL · NO UPLOAD</span></div>
 
       <div class="drop" id="drop">
-        <strong>DROP AN STL</strong>
-        <span>Binary or ASCII · up to 150 MB</span>
+        <strong>DROP AN STL OR 3MF</strong>
+        <span>STL or 3MF · up to 150 MB</span>
         <label class="btn pick">Choose file
           <input type="file" id="stl-input" accept=".stl,.3mf,model/stl,application/sla,application/vnd.ms-pki.stl,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml">
         </label>
@@ -80,7 +80,7 @@
       </div>
 
       <div class="done" id="done" hidden>
-        <a class="btn btn-green" id="downloadbtn" href="#">Download fixed STL</a>
+        <a class="btn btn-green" id="downloadbtn" href="#">Download fixed file</a>
         <small id="done-note"></small>
       </div>
 
@@ -131,10 +131,11 @@
   <section class="wrap section" id="faq">
     <div class="section-head"><span class="label">02</span><h2>FAQ</h2><span class="rule"></span></div>
     <div class="faq">
-      <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab, and the 3D view runs in the page. Your STL is read from your disk and the fixed copy is handed straight back to you. The only downloads are the site's own code.</p></details>
+      <details><summary>Is my file uploaded anywhere?</summary><p>No. The repair runs in a worker inside this browser tab, and the 3D view runs in the page. Your file is read from your disk and the fixed copy is handed straight back to you. The only downloads are the site's own code.</p></details>
       <details><summary>Will it change the shape of my model?</summary><p>Only where it has to. Holes are closed with new faces, inside walls and duplicate faces are taken out, and loose bits that are flat or under about 0.1% of the model's size are removed. Where three or more faces share an edge, that cleanup is undone if it would change the volume by more than 0.1%. When the repair finishes, the result says whether the volume changed and by how much.</p></details>
       <details><summary>Does it work with Bambu Studio?</summary><p>That's what it's built for. After the repair, Hullpatch checks the file for the three problems Bambu Studio reports: open edges, non-manifold edges and flipped faces. If none are left it says "watertight"; if some couldn't be fixed safely it says "partly repaired". Test files that came out watertight also passed Bambu Studio's own check.</p></details>
-      <details><summary>Can I install it as an app?</summary><p>Yes. In Chrome or Edge, use the Install app button at the top of the page (or the install icon in the address bar); on Android, "Add to Home screen"; in Safari, Share → "Add to Dock" or "Add to Home Screen". The installed app opens in its own window and works offline once it has been opened once; the 3D view works offline after your first repair. In Chrome and Edge on a computer you can open .stl files with it, and on Android you can share an .stl to it.</p></details>
+      <details><summary>Can it repair 3MF files and Bambu Studio projects?</summary><p>Yes. A 3MF comes back as a 3MF (&lt;name&gt;_fixed.3mf) that keeps plates, filament and print settings, transforms and colours; only the mesh of the repaired objects changes. If a file holds several objects, you pick which ones to repair: objects with problems are ticked by default, and the rest are copied through untouched. Painted colour, seam and support paint is kept on triangles the repair didn't change, and the result says how many painted triangles lost their paint if any had to be replaced. Negative parts, modifiers and support blockers or enforcers are never repaired, and both Bambu Studio project files and plain 3MF files work.</p></details>
+      <details><summary>Can I install it as an app?</summary><p>Yes. In Chrome or Edge, use the Install app button at the top of the page (or the install icon in the address bar); on Android, "Add to Home screen"; in Safari, Share → "Add to Dock" or "Add to Home Screen". The installed app opens in its own window and works offline once it has been opened once; the 3D view works offline after your first repair. In Chrome and Edge on a computer you can open .stl and .3mf files with it, and on Android you can share .stl and .3mf files to it.</p></details>
       <details><summary>What if my file is too broken?</summary><p>Files up to 150 MB are accepted, and each repair stops after 4 minutes so your browser stays responsive. If a repair is stopped or comes back "partly repaired", fix the model in your CAD tool or re-export it, then try again.</p></details>
     </div>
   </section>
