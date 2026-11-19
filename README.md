@@ -1,9 +1,16 @@
 # Hullpatch
 
-STL repair that runs in the browser, part of [townsville.cc](https://townsville.cc).
-Drop in an STL and Hullpatch closes holes, removes inside walls, turns flipped faces
+STL and 3MF repair that runs in the browser, part of [townsville.cc](https://townsville.cc).
+Drop in an STL or 3MF and Hullpatch closes holes, removes inside walls, turns flipped faces
 outward and clears unprintable specks, so the file loads as a clean, manifold solid
 in Bambu Studio. Nothing is uploaded: the repair runs in a Web Worker in the tab.
+
+A 3MF comes back as a 3MF (`<name>_fixed.3mf`) that keeps plates, filament and print
+settings, transforms and colours; only the mesh of the repaired objects changes. If a
+file holds several objects, you pick which ones to repair, and the rest are copied
+through untouched. Negative parts, modifiers and support blockers or enforcers are never
+repaired. Painted colour, seam and support paint is kept on triangles the repair didn't
+change; if painted triangles had to be replaced, the result says how many lost their paint.
 
 The result opens in an interactive 3D view powered by [F3D](https://f3d.app)'s
 WebAssembly build (the same viewer Manyfold uses), with a Before/After toggle.
@@ -13,8 +20,8 @@ get a marker in their colour. **See inside** makes the healthy surface see-throu
 so inside walls hidden in the model show up.
 
 Hullpatch can be installed as an app (Install app button in Chrome and Edge, Add to
-Home Screen / Dock in Safari). Installed, it works offline, opens `.stl` files from
-the desktop (Chrome and Edge) and takes `.stl` files shared to it on Android.
+Home Screen / Dock in Safari). Installed, it works offline, opens `.stl` and `.3mf` files
+from the desktop (Chrome and Edge) and takes `.stl` and `.3mf` files shared to it on Android.
 
 ## Run with Docker
 
@@ -49,8 +56,15 @@ npm run test:repair # repair engine tests
 - `index.html`: the single page (hero, repair bay, what it fixes, FAQ).
 - `src/theme.css`: townsville.cc tokens and page styles.
 - `src/repair/mesh.js`: parse, weld, analyse, repair and write STL. Pure functions,
-  so they run in the worker and in Node tests.
-- `src/repair/worker.js`: runs read → scan → repair → re-check off the main thread.
+  so they run in the worker and in Node tests. `orient()` detects winding conflicts,
+  and the repair cuts and caps them.
+- `src/repair/threemf.js`: 3MF reader and writer (fflate + string scanning, no DOM, so it
+  runs in the worker and in Node tests): resolves production-extension components,
+  transforms, units and Bambu part types; the writer copies every zip entry and swaps
+  only the repaired objects' vertices and triangles.
+- `src/repair/worker.js`: runs read → scan → repair → re-check off the main thread. For a
+  3MF it repairs each object on its own and asks the page which objects to repair when
+  there are several.
 - `src/repair/tool.js`: the repair bay UI (log, readout, download, previews).
 - `src/repair/viewer.js`: the F3D 3D view. F3D is ~12 MB gzipped, so it is only
   fetched once a repair starts. Without WebGL 2 the page shows flat pictures instead.
@@ -81,6 +95,10 @@ npm run test:repair # repair engine tests
 5. Removes any faces still on non-manifold edges and refills the gaps, but only keeps
    that change if the model's volume stays the same.
 6. Removes specks: shells under 1/1000 of the model's size or with no volume.
+7. Handles winding conflicts: edges where the surface twists so that no way of turning
+   the faces makes both sides agree (typical when parts were exported inside-out and
+   joined). The few faces at those spots are cut out and the holes capped, so the model
+   becomes a consistent, outward-facing solid.
 
 The repaired file is checked again before download, and the page only says
 "watertight" when it has no open edges, non-manifold edges or flipped faces.

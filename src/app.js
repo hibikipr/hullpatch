@@ -1,4 +1,4 @@
-// Installed-app features: offline support, an install button, and STL files handed
+// Installed-app features: offline support, an install button, and STL or 3MF files handed
 // to the app by the system (desktop "Open with", or the Android share sheet).
 
 /** Register the service worker (production builds only; it caches the built files). */
@@ -36,9 +36,9 @@ export function setUpInstallButton(button) {
   });
 }
 
-/** Pass STL files the system hands to the app to `open(file)`. */
+/** Pass STL or 3MF files the system hands to the app to `open(file)`. */
 export function receiveFiles(open) {
-  // Desktop: the app was chosen to open an .stl file (manifest file_handlers).
+  // Desktop: the app was chosen to open an .stl or .3mf file (manifest file_handlers).
   if ('launchQueue' in window) {
     window.launchQueue.setConsumer(async (params) => {
       const handle = params.files && params.files[0];
@@ -63,7 +63,8 @@ async function takeSharedFile() {
     if (!res) return null;
     await cache.delete('/shared-file');
     const name = decodeURIComponent(res.headers.get('x-file-name') || 'shared.stl');
-    return new File([await res.blob()], name, { type: 'model/stl' });
+    const type = /\.3mf$/i.test(name) ? 'model/3mf' : 'model/stl';
+    return new File([await res.blob()], name, { type });
   } catch {
     return null;
   }
