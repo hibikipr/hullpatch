@@ -17,7 +17,7 @@
   "file_handlers": [
     {
       "action": "/",
-      "accept": { "model/stl": [".stl"] },
+      "accept": { "model/stl": [".stl"], "model/3mf": [".3mf"] },
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }],
       "launch_type": "single-client"
     }
@@ -29,7 +29,7 @@
     "enctype": "multipart/form-data",
     "params": {
       "files": [
-        { "name": "stl", "accept": [".stl", "model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream"] }
+        { "name": "stl", "accept": [".stl", "model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream", ".3mf", "model/3mf", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"] }
       ]
     }
   }

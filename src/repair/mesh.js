@@ -173,14 +173,16 @@ function dedupe(verts, src, areaEps) {
     const same = [a, b, c][(i + 1) % 3] === s;
     g.net += same ? 1 : -1;
   }
-  const out = [];
+  // Also say which input face each output face is and whether it was turned over.
+  const out = [], from = [], rev = [];
   for (const g of order) {
     if (g.net === 0) continue;
     const f = g.first;
     if (g.net > 0) out.push(src[f * 3], src[f * 3 + 1], src[f * 3 + 2]);
     else out.push(src[f * 3], src[f * 3 + 2], src[f * 3 + 1]);
+    from.push(f); rev.push(g.net < 0 ? 1 : 0);
   }
-  return Uint32Array.from(out);
+  return { faces: Uint32Array.from(out), from: Int32Array.from(from), rev: Uint8Array.from(rev) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,6 +211,7 @@ function shellCount(faces, V) {
  * Remove specks: shells far too small to print (under 1/1000 of the model's size)
  * or with no volume. Slicers count each one as a separate part, and a flat speck
  * has no inside, so it often reads as reversed. The largest shell is always kept.
+ * Returns the indices of the faces to keep, or null when nothing is dropped.
  */
 function dropDebrisShells(verts, faces, V, diag) {
   const F = faces.length / 3;
@@ -234,7 +237,7 @@ function dropDebrisShells(verts, faces, V, diag) {
       }
     }
   }
-  if (shells.size < 2) return faces;
+  if (shells.size < 2) return null;
   let largest = null;
   for (const [r, s] of shells) if (!largest || Math.abs(s.vol) > Math.abs(shells.get(largest).vol)) largest = r;
   const drop = new Set();
@@ -243,10 +246,10 @@ function dropDebrisShells(verts, faces, V, diag) {
     const size = Math.hypot(s.box[3] - s.box[0], s.box[4] - s.box[1], s.box[5] - s.box[2]);
     if (size < diag * 1e-3 || Math.abs(s.vol) < diag * diag * diag * 1e-12) drop.add(r);
   }
-  if (!drop.size) return faces;
+  if (!drop.size) return null;
   const keep = [];
-  for (let f = 0; f < F; f++) if (!drop.has(find(faces[f * 3]))) keep.push(faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
-  return Uint32Array.from(keep);
+  for (let f = 0; f < F; f++) if (!drop.has(find(faces[f * 3]))) keep.push(f);
+  return keep;
 }
 
 /* ------------------------------------------------------------------ */
@@ -254,52 +257,77 @@ function dropDebrisShells(verts, faces, V, diag) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Make neighbouring faces agree on their winding (walking across edges shared by
- * exactly two faces), then turn each closed patch outward (cavities inward).
- * Returns the new faces and how many faces ended up flipped.
+ * Make neighbouring faces agree on their winding (across edges shared by exactly
+ * two faces), then turn each closed patch outward (cavities inward).
+ * Welding can glue patches into a surface with no consistent winding at all (an
+ * inside-out patch stitched to the rest along one seam but joined the right way
+ * somewhere else). Then some edges must stay in conflict: they are returned as
+ * vertex pairs so repair() can cut them out, and are chosen where the faces' own
+ * inside/outside (ray parity) says the joint is wrong, not wherever a walk ends.
+ * Returns the new faces, how many faces ended up flipped, the per-face flips and
+ * the conflict edges.
  */
 function orient(verts, faces, V) {
   const F = faces.length / 3;
   const out = faces.slice();
   const { head, next } = buildEdges(out, V);
-  const flip = new Uint8Array(F);
-  const seen = new Uint8Array(F);
-  const comp = new Int32Array(F).fill(-1);
-  let comps = 0;
-  const stack = [];
-  const open = []; // per patch: has an edge not shared by exactly two faces
-
-  for (let s = 0; s < F; s++) {
-    if (seen[s]) continue;
-    seen[s] = 1;
-    comp[s] = comps;
-    open.push(0);
-    stack.push(s);
-    while (stack.length) {
-      const f = stack.pop();
-      for (let k = 0; k < 3; k++) {
-        let a = out[f * 3 + k], b = out[f * 3 + ((k + 1) % 3)];
-        if (a === b) continue;
-        if (flip[f]) { const t = a; a = b; b = t; }
-        let cnt = 0, other = -1;
-        for (let he = head.get(edgeKey(a, b, V)); he !== undefined && he !== -1; he = next[he]) {
-          cnt++;
-          if (((he / 3) | 0) !== f) other = he;
-        }
-        if (cnt !== 2 || other === -1) { open[comps] = 1; continue; }
-        const g = (other / 3) | 0;
-        if (seen[g]) continue;
-        const gk = other % 3;
-        const ga = out[g * 3 + gk], gb = out[g * 3 + ((gk + 1) % 3)];
-        // neighbours that agree run the shared edge in opposite directions
-        flip[g] = ga === a && gb === b ? 1 : 0;
-        seen[g] = 1;
-        comp[g] = comps;
-        stack.push(g);
-      }
+  // Each two-face edge ties its faces: need 1 when both run it the same way (one must flip).
+  const ef = [], eg = [], en = [], eh = [];
+  const openFace = new Uint8Array(F); // touches an edge not shared by exactly two faces
+  for (const he0 of head.values()) {
+    const he1 = next[he0];
+    const f = (he0 / 3) | 0, g = he1 === -1 ? -1 : (he1 / 3) | 0;
+    if (he1 === -1 || next[he1] !== -1 || f === g) {
+      for (let he = he0; he !== -1; he = next[he]) openFace[(he / 3) | 0] = 1;
+      continue;
     }
-    comps++;
+    ef.push(f); eg.push(g); en.push(out[he0] === out[he1] ? 1 : 0); eh.push(he0);
   }
+  const E = ef.length;
+
+  // Union-find that also keeps each face's flip relative to its root.
+  const solve = (order) => {
+    const par = new Int32Array(F), rel = new Uint8Array(F);
+    for (let f = 0; f < F; f++) par[f] = f;
+    let pp = 0;
+    const find = (x) => {
+      let r = x, p = 0;
+      while (par[r] !== r) { p ^= rel[r]; r = par[r]; }
+      pp = p;
+      while (par[x] !== r) { const n = par[x], q = rel[x]; par[x] = r; rel[x] = p; p ^= q; x = n; }
+      return r;
+    };
+    const bad = [];
+    for (const e of order) {
+      const ra = find(ef[e]), pa = pp, rb = find(eg[e]), pb = pp;
+      if (ra !== rb) { par[ra] = rb; rel[ra] = pa ^ pb ^ en[e]; }
+      else if ((pa ^ pb) !== en[e]) bad.push(e);
+    }
+    const flip = new Uint8Array(F), root = new Int32Array(F);
+    for (let f = 0; f < F; f++) { root[f] = find(f); flip[f] = pp; }
+    return { flip, root, bad };
+  };
+  let sol = solve(Array.from({ length: E }, (_, e) => e));
+  if (sol.bad.length) {
+    // No consistent winding: join first the edges where both faces' own inside/outside
+    // agree, so the leftover conflicts sit where the geometry says the joint is wrong.
+    const inward = facesPointingIn(verts, out);
+    const order = [];
+    for (let e = 0; e < E; e++) if ((inward[ef[e]] ^ inward[eg[e]]) === en[e]) order.push(e);
+    for (let e = 0; e < E; e++) if ((inward[ef[e]] ^ inward[eg[e]]) !== en[e]) order.push(e);
+    const alt = solve(order);
+    if (alt.bad.length < sol.bad.length) sol = alt;
+  }
+  const { flip } = sol;
+  const comp = new Int32Array(F).fill(-1), ids = new Int32Array(F).fill(-1);
+  let comps = 0;
+  for (let f = 0; f < F; f++) {
+    const r = sol.root[f];
+    if (ids[r] === -1) ids[r] = comps++;
+    comp[f] = ids[r];
+  }
+  const open = new Uint8Array(comps);
+  for (let f = 0; f < F; f++) if (openFace[f]) open[comp[f]] = 1;
 
   for (let f = 0; f < F; f++) {
     if (flip[f]) { const t = out[f * 3 + 1]; out[f * 3 + 1] = out[f * 3 + 2]; out[f * 3 + 2] = t; }
@@ -327,7 +355,71 @@ function orient(verts, faces, V) {
     }
     if (flip[f]) flipped++;
   }
-  return { faces: out, flipped, flip };
+  const conflicts = new Uint32Array(sol.bad.length * 2);
+  sol.bad.forEach((e, i) => {
+    const he = eh[e], f = (he / 3) | 0;
+    conflicts[i * 2] = faces[he];
+    conflicts[i * 2 + 1] = faces[f * 3 + ((he % 3) + 1) % 3];
+  });
+  return { faces: out, flipped, flip, conflicts };
+}
+
+/**
+ * 1 for each face whose front points into the solid: a point just in front of it is
+ * inside by ray parity (a +x ray, triangles binned on a y-z grid). Only a hint for
+ * orient() on surfaces with no consistent winding, so one ray per face is enough.
+ */
+function facesPointingIn(verts, faces) {
+  const F = faces.length / 3;
+  let y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < faces.length; i++) {
+    const y = verts[faces[i] * 3 + 1], z = verts[faces[i] * 3 + 2];
+    if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const G = Math.max(1, Math.min(1024, Math.ceil(Math.sqrt(F))));
+  const sy = (y1 - y0) / G * 1.0001 || 1, sz = (z1 - z0) / G * 1.0001 || 1;
+  const cell = (v, lo, s) => Math.min(G - 1, Math.max(0, Math.floor((v - lo) / s)));
+  // Bins as one flat list: count per cell, then fill.
+  const box = new Int32Array(F * 4), start = new Int32Array(G * G + 1);
+  for (let f = 0; f < F; f++) {
+    let ya = Infinity, yb = -Infinity, za = Infinity, zb = -Infinity;
+    for (let k = 0; k < 3; k++) {
+      const y = verts[faces[f * 3 + k] * 3 + 1], z = verts[faces[f * 3 + k] * 3 + 2];
+      if (y < ya) ya = y; if (y > yb) yb = y; if (z < za) za = z; if (z > zb) zb = z;
+    }
+    box[f * 4] = cell(ya, y0, sy); box[f * 4 + 1] = cell(yb, y0, sy); box[f * 4 + 2] = cell(za, z0, sz); box[f * 4 + 3] = cell(zb, z0, sz);
+    for (let i = box[f * 4]; i <= box[f * 4 + 1]; i++) for (let j = box[f * 4 + 2]; j <= box[f * 4 + 3]; j++) start[i * G + j + 1]++;
+  }
+  for (let c = 0; c < G * G; c++) start[c + 1] += start[c];
+  const list = new Int32Array(start[G * G]), fill = start.slice(0, G * G);
+  for (let f = 0; f < F; f++) {
+    for (let i = box[f * 4]; i <= box[f * 4 + 1]; i++) for (let j = box[f * 4 + 2]; j <= box[f * 4 + 3]; j++) list[fill[i * G + j]++] = f;
+  }
+  const inward = new Uint8Array(F);
+  for (let f = 0; f < F; f++) {
+    const a = faces[f * 3] * 3, b = faces[f * 3 + 1] * 3, c = faces[f * 3 + 2] * 3;
+    const ux = verts[b] - verts[a], uy = verts[b + 1] - verts[a + 1], uz = verts[b + 2] - verts[a + 2];
+    const vx = verts[c] - verts[a], vy = verts[c + 1] - verts[a + 1], vz = verts[c + 2] - verts[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz);
+    if (!l) continue;
+    const step = Math.sqrt(l) * 0.02 / l; // a little in front, relative to the face's size
+    const ox = verts[a] + 0.31 * ux + 0.33 * vx + nx * step;
+    const oy = verts[a + 1] + 0.31 * uy + 0.33 * vy + ny * step;
+    const oz = verts[a + 2] + 0.31 * uz + 0.33 * vz + nz * step;
+    const ci = cell(oy, y0, sy) * G + cell(oz, z0, sz);
+    let hits = 0;
+    for (let t = start[ci]; t < start[ci + 1]; t++) {
+      const g = list[t], A = faces[g * 3] * 3, B = faces[g * 3 + 1] * 3, C = faces[g * 3 + 2] * 3;
+      const ay = verts[A + 1] - oy, az = verts[A + 2] - oz, by = verts[B + 1] - oy, bz = verts[B + 2] - oz;
+      const cy = verts[C + 1] - oy, cz = verts[C + 2] - oz;
+      const w0 = by * cz - bz * cy, w1 = cy * az - cz * ay, w2 = ay * bz - az * by;
+      if (!((w0 > 0 && w1 > 0 && w2 > 0) || (w0 < 0 && w1 < 0 && w2 < 0))) continue;
+      if ((w0 * verts[A] + w1 * verts[B] + w2 * verts[C]) / (w0 + w1 + w2) > ox) hits++;
+    }
+    inward[f] = hits & 1;
+  }
+  return inward;
 }
 
 function signedVolume(verts, a, b, c) {
@@ -596,7 +688,7 @@ export function analyze(mesh) {
   let planar = 0, nonPlanar = 0;
   for (const loop of boundaryLoops(faces, vCount)) (loopIsPlanar(verts, loop, diag) ? planar++ : nonPlanar++);
 
-  const { flipped } = orient(verts, faces, vCount);
+  const { flipped, conflicts } = orient(verts, faces, vCount);
   const shells = shellCount(faces, vCount);
 
   return {
@@ -605,6 +697,7 @@ export function analyze(mesh) {
     NonPlanarHoles: nonPlanar,
     NonManifoldEdges: nonManifold,
     InvertedNormals: flipped,
+    OrientationConflicts: conflicts.length / 2, // edges no winding can make agree
     DuplicateFaces: duplicate,
     DegenerateFaces: degenerate,
     DisjointShells: shells > 1 ? shells : 0,
@@ -619,8 +712,12 @@ export function analyze(mesh) {
 
 /**
  * Repair a welded mesh: drop degenerate and duplicate faces, make windings agree and
- * face outward, close holes, then orient again with the new patches.
- * onProgress(fraction 0..1) is called along the way.
+ * face outward, cut out spots where no winding can agree, close holes, then orient
+ * again with the new patches. onProgress(fraction 0..1) is called along the way.
+ * Besides the mesh it returns, per output face, where it came from (for keeping
+ * per-triangle data): origin (input face index, -1 for faces the repair made),
+ * reversed (1 if wound opposite to that face) and corner (3 per face: which corner
+ * of the origin face each corner is).
  */
 export function repair(mesh, onProgress = () => {}) {
   const { diag } = mesh;
@@ -633,41 +730,81 @@ export function repair(mesh, onProgress = () => {}) {
     out.set(extra, mesh.vCount * 3);
     return out;
   };
+  const addVertex = (x, y, z) => { extra.push(x, y, z); return V++; };
 
   onProgress(0.05);
-  let faces = dedupe(mesh.verts, mesh.faces, areaEps);
+  const d = dedupe(mesh.verts, mesh.faces, areaEps);
+  let faces = d.faces, org = d.from, cor = new Uint8Array(faces.length);
+  for (let f = 0; f < org.length; f++) { cor[f * 3 + 1] = d.rev[f] ? 2 : 1; cor[f * 3 + 2] = d.rev[f] ? 1 : 2; }
+  // Keep the listed faces (null: all) and append new ones, carrying the provenance along.
+  const rebuild = (keep, added = []) => {
+    const n = (keep ? keep.length : faces.length / 3), total = n + added.length / 3;
+    const nf = new Uint32Array(total * 3), no = new Int32Array(total).fill(-1), nc = new Uint8Array(total * 3);
+    if (keep) {
+      for (let i = 0; i < n; i++) {
+        const f = keep[i];
+        for (let k = 0; k < 3; k++) { nf[i * 3 + k] = faces[f * 3 + k]; nc[i * 3 + k] = cor[f * 3 + k]; }
+        no[i] = org[f];
+      }
+    } else { nf.set(faces); nc.set(cor); no.set(org); }
+    nf.set(added, n * 3);
+    for (let i = n; i < total; i++) { nc[i * 3 + 1] = 1; nc[i * 3 + 2] = 2; }
+    faces = nf; org = no; cor = nc;
+  };
+  const keepWhere = (test) => {
+    const keep = [];
+    for (let f = 0; f < faces.length / 3; f++) if (test(f)) keep.push(f);
+    rebuild(keep);
+  };
+  const reorient = (vs) => {
+    const o = orient(vs, faces, V);
+    faces = o.faces;
+    for (let f = 0; f < o.flip.length; f++) {
+      if (o.flip[f]) { const t = cor[f * 3 + 1]; cor[f * 3 + 1] = cor[f * 3 + 2]; cor[f * 3 + 2] = t; }
+    }
+    return o;
+  };
+  // A surface with no consistent winding (see orient) cannot be fixed by flipping:
+  // remove every face touching a conflict edge. Each side's hole then runs one way
+  // and is capped on its own, which leaves an orientable closed surface.
+  const cutConflicts = (conflicts) => {
+    const mark = new Uint8Array(V);
+    for (const v of conflicts) mark[v] = 1;
+    keepWhere((f) => !mark[faces[f * 3]] && !mark[faces[f * 3 + 1]] && !mark[faces[f * 3 + 2]]);
+  };
+  const closeHoles = (p0, p1) => {
+    for (let pass = 0; pass < 3; pass++) {
+      const loops = boundaryLoops(faces, V);
+      if (!loops.length) break;
+      const vNow = allVerts();
+      const added = [];
+      const removed = new Uint8Array(faces.length / 3);
+      let edges = null;
+      loops.forEach((loop, i) => {
+        // A hole with no area is a T-junction: split the face across its long edge instead.
+        if (loopIsCollinear(vNow, loop, diag)) {
+          edges = edges || buildEdges(faces, V);
+          if (splitTJunction(vNow, faces, loop, edges, V, removed, added)) return;
+        }
+        for (const t of triangulateLoop(vNow, loop, addVertex)) added.push(t[0], t[1], t[2]);
+        if (i % 50 === 0) onProgress(p0 + (p1 - p0) * ((pass + i / loops.length) / 3));
+      });
+      const keep = [];
+      for (let f = 0; f < faces.length / 3; f++) if (!removed[f]) keep.push(f);
+      rebuild(keep, added);
+    }
+  };
   onProgress(0.2);
 
-  faces = orient(mesh.verts, faces, V).faces;
+  const first = reorient(mesh.verts);
+  if (first.conflicts.length) cutConflicts(first.conflicts);
   onProgress(0.4);
-
-  for (let pass = 0; pass < 3; pass++) {
-    const loops = boundaryLoops(faces, V);
-    if (!loops.length) break;
-    const vNow = allVerts();
-    const addVertex = (x, y, z) => { extra.push(x, y, z); return V++; };
-    const added = [];
-    const removed = new Uint8Array(faces.length / 3);
-    let edges = null;
-    loops.forEach((loop, i) => {
-      // A hole with no area is a T-junction: split the face across its long edge instead.
-      if (loopIsCollinear(vNow, loop, diag)) {
-        edges = edges || buildEdges(faces, V);
-        if (splitTJunction(vNow, faces, loop, edges, V, removed, added)) return;
-      }
-      for (const t of triangulateLoop(vNow, loop, addVertex)) added.push(t[0], t[1], t[2]);
-      if (i % 50 === 0) onProgress(0.4 + 0.4 * ((pass + i / loops.length) / 3));
-    });
-    const merged = [];
-    for (let f = 0; f < faces.length / 3; f++) if (!removed[f]) merged.push(faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
-    for (const v of added) merged.push(v);
-    faces = Uint32Array.from(merged);
-  }
+  closeHoles(0.4, 0.8);
 
   // Edges still shared by more than two faces (touching shells, stray internal faces):
   // remove the faces on them and close the resulting holes, a few rounds at most.
   // Kept only if the solid keeps its volume: a manifold mesh of the wrong shape is worse.
-  const beforeCleanup = faces;
+  const beforeCleanup = { faces, org, cor };
   const volumeOf = (fs) => {
     const vs = allVerts();
     let s = 0;
@@ -679,42 +816,41 @@ export function repair(mesh, onProgress = () => {}) {
     const bad = nonManifoldFaces(faces, V);
     if (!bad.size) break;
     cleaned = true;
-    const keep = [];
-    for (let f = 0; f < faces.length / 3; f++) if (!bad.has(f)) keep.push(faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
-    faces = Uint32Array.from(keep);
+    keepWhere((f) => !bad.has(f));
     const vNow = allVerts();
-    const addVertex = (x, y, z) => { extra.push(x, y, z); return V++; };
     const added = [];
     for (const loop of boundaryLoops(faces, V)) {
       for (const t of triangulateLoop(vNow, loop, addVertex)) added.push(t[0], t[1], t[2]);
     }
-    const merged = new Uint32Array(faces.length + added.length);
-    merged.set(faces);
-    merged.set(added, faces.length);
-    faces = merged;
+    rebuild(null, added);
   }
   if (cleaned) {
-    const v0 = Math.abs(volumeOf(orient(allVerts(), beforeCleanup, V).faces));
+    const v0 = Math.abs(volumeOf(orient(allVerts(), beforeCleanup.faces, V).faces));
     const v1 = Math.abs(volumeOf(orient(allVerts(), faces, V).faces));
-    if (Math.abs(v1 - v0) > Math.max(v0, 1e-30) * 1e-3) faces = beforeCleanup;
+    if (Math.abs(v1 - v0) > Math.max(v0, 1e-30) * 1e-3) ({ faces, org, cor } = beforeCleanup);
   }
   onProgress(0.85);
 
-  const verts = allVerts();
-  faces = dropDebrisShells(verts, faces, V, diag);
-  faces = orient(verts, faces, V).faces;
-  const keep = [];
-  for (let f = 0; f < faces.length / 3; f++) {
-    if (!isDegenerate(verts, faces, f, areaEps)) keep.push(faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
+  const keepShells = dropDebrisShells(allVerts(), faces, V, diag);
+  if (keepShells) rebuild(keepShells);
+  // Orient once more with the new patches; cut and cap again if a conflict is left.
+  for (let round = 0; round < 3; round++) {
+    const o = reorient(allVerts());
+    if (!o.conflicts.length || round === 2) break;
+    cutConflicts(o.conflicts);
+    closeHoles(0.85, 0.9);
   }
-  faces = Uint32Array.from(keep);
+  const verts = allVerts();
+  keepWhere((f) => !isDegenerate(verts, faces, f, areaEps));
 
   const used = new Uint8Array(V);
   for (const v of faces) used[v] = 1;
   let usedCount = 0;
   for (let i = 0; i < V; i++) usedCount += used[i];
+  const reversed = new Uint8Array(org.length);
+  for (let f = 0; f < org.length; f++) reversed[f] = org[f] >= 0 && (cor[f * 3 + 1] + 3 - cor[f * 3]) % 3 === 2 ? 1 : 0;
   onProgress(1);
-  return { verts, faces, vCount: V, usedVertices: usedCount, diag };
+  return { verts, faces, vCount: V, usedVertices: usedCount, diag, origin: org, reversed, corner: cor };
 }
 
 /** Enclosed volume (signed: positive when faces point outward). */
@@ -723,6 +859,14 @@ export function meshVolume(mesh) {
   let v = 0;
   for (let f = 0; f < faces.length / 3; f++) v += signedVolume(verts, faces[f * 3], faces[f * 3 + 1], faces[f * 3 + 2]);
   return v;
+}
+
+/**
+ * Enclosed volume with the faces turned outward first. Flipped faces make meshVolume
+ * cancel itself out, so this is the fair "before" figure to compare a repair against.
+ */
+export function orientedVolume(mesh) {
+  return Math.abs(meshVolume({ verts: mesh.verts, faces: orient(mesh.verts, mesh.faces, mesh.vCount).faces }));
 }
 
 /* ------------------------------------------------------------------ */
