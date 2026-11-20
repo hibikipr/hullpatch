@@ -1,5 +1,15 @@
 title: Hullpatch
 description: STL and 3MF repair in the browser, with an optional HTTP API.
-theme: jekyll-theme-cayman
 url: https://hibikipr.github.io
 baseurl: /hullpatch
+
+# The townsville.cc look (same tokens and fonts as the Hullpatch page), no stock theme.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge

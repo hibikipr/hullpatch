@@ -3,8 +3,7 @@ title: Hullpatch HTTP API
 ---
 
 # Hullpatch HTTP API
-
-[Home](index.md) | [OpenAPI spec](openapi.yaml) | [GitHub](https://github.com/hibikipr/hullpatch)
+{:.no_toc}
 
 * TOC
 {:toc}
