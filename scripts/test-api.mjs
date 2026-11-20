@@ -172,6 +172,36 @@ try {
   await s.api.close(500);
 }
 
+{ // Memory guards: a model over the triangle or unpacked-size limit is refused with 413
+  // before the expensive steps, and a file within the limits still repairs.
+  const s = await mk({ maxTriangles: 9 }); // the fixture has 10 triangles
+  const a = await post(s.port, '/api/v1/repair', stl, 'model/stl');
+  check2('api: STL over the triangle limit -> 413', a.status === 413 && /10 triangles to repair \(limit 9\)/.test(a.json().error));
+  const b = await post(s.port, '/api/v1/repair', threeMf, 'model/3mf');
+  check2('api: 3MF part to repair over the limit -> 413', b.status === 413 && /to repair \(limit 9\)/.test(b.json().error));
+  const c = await post(s.port, '/api/v1/analyze', stl, 'model/stl');
+  check2('api: analyze is guarded too', c.status === 413);
+  // A clean part over the repair limit isn't repaired, so only the (4x) scan limit applies:
+  // a big project where only small parts need fixing still goes through.
+  const clean = mesh3mf().replace(/<triangles>.*<\/triangles>/, `<triangles>${CUBE.map(([x, y, z]) => `<triangle v1="${x}" v2="${y}" v3="${z}"/>`).join('')}</triangles>`);
+  const clean3mf = Buffer.from(zipSync({ '[Content_Types].xml': strToU8(CT), '_rels/.rels': strToU8(RELS), '3D/3dmodel.model': strToU8(clean) }));
+  const f = await post(s.port, '/api/v1/repair', clean3mf, 'model/3mf');
+  check2('api: 3MF with nothing to repair passes under the scan limit', f.status === 200);
+  await s.api.close(500);
+
+  const u = await mk({ maxTriangles: 2 }); // scan limit 8 < 10 triangles in the file
+  const g = await post(u.port, '/api/v1/analyze', threeMf, 'model/3mf');
+  check2('api: 3MF over the scan limit -> 413', g.status === 413 && /10 triangles in all \(limit 8\)/.test(g.json().error));
+  await u.api.close(500);
+
+  const t = await mk({ maxUncompressed: 200 });
+  const d = await post(t.port, '/api/v1/repair', threeMf, 'model/3mf');
+  check2('api: 3MF that unpacks past the limit -> 413', d.status === 413 && /expands to more than/.test(d.json().error));
+  const e = await post(t.port, '/api/v1/repair', stl, 'model/stl');
+  check2('api: a file within the limits still repairs', e.status === 200 && /watertight=1/.test(e.headers['hullpatch-report']));
+  await t.api.close(500);
+}
+
 console.log = realLog;
 say(ok ? 'PASS (api)' : 'FAIL (api)');
 process.exit(ok ? 0 : 1);

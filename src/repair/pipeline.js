@@ -6,6 +6,38 @@ import { parse3mf, transformVerts, ThreeMfError, write3mf } from './threemf.js';
 
 export { StlError, ThreeMfError };
 
+/**
+ * A file too big for the memory this process may use. Only thrown when the caller passes
+ * limits (the HTTP API does; the page doesn't, a browser tab has its own memory).
+ * Peak memory is about 1.5 to 2 KB per triangle, so the triangle count is what to cap.
+ */
+export class TooLargeError extends Error {}
+
+// Triangles in a binary STL, from its header, before anything is parsed (null for ASCII:
+// those are about 250 bytes a triangle, so the upload size cap already keeps them small).
+function binaryStlTriangles(buffer) {
+  if (buffer.byteLength < 84) return null;
+  const n = new DataView(buffer, 80, 4).getUint32(0, true);
+  return 84 + n * 50 === buffer.byteLength ? n : null;
+}
+
+const fmt = (n) => n.toLocaleString('en-US');
+
+// Triangles that get repaired cost the most memory (about 1.5-2 KB each at the peak).
+function checkTriangles(n, limits) {
+  if (limits && limits.maxTriangles && n > limits.maxTriangles) {
+    throw new TooLargeError(`model too large for this server: ${fmt(n)} triangles to repair (limit ${fmt(limits.maxTriangles)})`);
+  }
+}
+
+// Triangles that are only scanned and copied (3MF parts left as they are) cost about a
+// quarter as much, so a project with many parts can be bigger as long as few need repair.
+const scanLimit = (limits) => limits && (limits.maxScanTriangles || (limits.maxTriangles && limits.maxTriangles * 4));
+function checkScanned(n, limits) {
+  const max = scanLimit(limits);
+  if (max && n > max) throw new TooLargeError(`model too large for this server: ${fmt(n)} triangles in all (limit ${fmt(max)})`);
+}
+
 /** True when the file is a 3MF: by name, or by the zip signature PK\x03\x04. */
 export const is3mf = (buffer, name) => {
   if (/\.3mf$/i.test(name || '')) return true;
@@ -66,6 +98,21 @@ function sumAnalyses(objs, analyses) {
   return total;
 }
 
+// Volume of a 3MF: each part's own volume, once per place it is printed, scaled by that
+// placement (Bambu can scale a part). Like sumAnalyses, not the assembled mesh: welding
+// touching parts together by position changes what counts as inside.
+function summedVolume(objs, volumeOf) {
+  let total = 0;
+  for (const o of objs) {
+    const v = volumeOf(o);
+    for (const m of o.placements) {
+      const det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+      total += v * Math.abs(det);
+    }
+  }
+  return total;
+}
+
 const noop = () => {};
 
 /**
@@ -74,15 +121,17 @@ const noop = () => {};
  */
 
 /** Count problems in an STL without repairing it. */
-export function analyzeStl(buffer) {
+export function analyzeStl(buffer, { limits } = {}) {
+  checkTriangles(binaryStlTriangles(buffer) || 0, limits);
   const mesh = weld(parseStl(buffer));
   const analysis = analyze(mesh);
   return { analysis, volume: orientedVolume(mesh), watertight: isWatertight(analysis) };
 }
 
 /** Parse, scan, repair and re-scan an STL. Returns the fixed mesh and the bytes of the repaired STL. */
-export function repairStl(buffer, { name = 'model.stl', onStage = noop, onScan = noop, onProgress = noop } = {}) {
+export function repairStl(buffer, { name = 'model.stl', limits, onStage = noop, onScan = noop, onProgress = noop } = {}) {
   onStage('read');
+  checkTriangles(binaryStlTriangles(buffer) || 0, limits);
   const mesh = weld(parseStl(buffer));
 
   onStage('scan');
@@ -106,10 +155,19 @@ export function repairStl(buffer, { name = 'model.stl', onStage = noop, onScan =
  * Read a 3MF and scan each normal part on its own. Cheap enough to run before asking which parts to repair.
  * `objects` is the list a picker shows; `problems` counts what is wrong in each part.
  */
-export function open3mf(buffer) {
-  const parsed = parse3mf(buffer);
+export function open3mf(buffer, { limits } = {}) {
+  let parsed;
+  try {
+    parsed = parse3mf(buffer, limits && limits.maxUncompressed ? { maxUncompressed: limits.maxUncompressed } : {});
+  } catch (err) {
+    if (limits && err instanceof ThreeMfError && /expands to more than/.test(err.message)) throw new TooLargeError(err.message);
+    throw err;
+  }
   const objs = parsed.objects.filter((o) => o.kind === 'normal');
   if (!objs.length) throw new ThreeMfError('this 3mf file has no printable mesh objects');
+  // Before welding: every part is welded and scanned, and placed once per copy in the
+  // assembled model. The parts to repair are checked again in repair3mf, once they are known.
+  checkScanned(objs.reduce((s, o) => s + (o.faces.length / 3) * Math.max(1, o.placements.length), 0), limits);
 
   // Each object on its own, in its own coordinates (triangle order = file order).
   const meshes = new Map();
@@ -121,13 +179,13 @@ export function open3mf(buffer) {
   }
   const objects = objs.map((o) => ({ key: o.key, name: o.name, group: o.group, plate: o.plate, triangles: o.faces.length / 3, problems: problemCount(scans.get(o.key)) }));
   const groups = new Set(objs.map((o) => o.group)).size;
-  return { parsed, objs, meshes, scans, objects, groups };
+  return { parsed, objs, meshes, scans, objects, groups, limits };
 }
 
 /** Counts, volume and per-part list for an opened 3MF, no repair. */
 export function analyze3mf(opened) {
   const analysis = sumAnalyses(opened.objs, opened.scans);
-  const volume = orientedVolume(assemble(opened.objs, opened.meshes));
+  const volume = summedVolume(opened.objs, (o) => orientedVolume(opened.meshes.get(o.key)));
   return { analysis, volume, watertight: isWatertight(analysis), parts: opened.objects.map(({ name, group, plate, triangles, problems }) => ({ name, group, plate, triangles, problems })) };
 }
 
@@ -139,16 +197,17 @@ export function repair3mf(opened, keys, { onStage = noop, onScan = noop, onProgr
   const { parsed, objs, meshes, scans } = opened;
   const known = new Set(objs.map((o) => o.key));
   const chosen = keys.filter((k) => known.has(k));
+  const byKey = new Map(objs.map((o) => [o.key, o]));
+  checkTriangles(chosen.reduce((s, k) => s + byKey.get(k).faces.length / 3, 0), opened.limits);
 
   onStage('scan');
   const beforeMesh = assemble(objs, meshes);
   const before = sumAnalyses(objs, scans);
   onScan({ mesh: beforeMesh, analysis: before, format: '3mf', unit: parsed.unit, objectCount: objs.length, chosen: chosen.length });
-  const volumeBefore = orientedVolume(beforeMesh);
+  const volumeBefore = summedVolume(objs, (o) => orientedVolume(meshes.get(o.key)));
 
   onStage('repair');
   const t0 = performance.now();
-  const byKey = new Map(objs.map((o) => [o.key, o]));
   const total = chosen.reduce((s, k) => s + byKey.get(k).faces.length, 0) || 1;
   const results = new Map();
   const fixedMeshes = new Map(meshes);
@@ -170,7 +229,7 @@ export function repair3mf(opened, keys, { onStage = noop, onScan = noop, onProgr
   const afterScans = new Map(scans);
   for (const [key, res] of results) afterScans.set(key, analyze(res));
   const after = sumAnalyses(objs, afterScans);
-  const volumeAfter = Math.abs(meshVolume(afterMesh));
+  const volumeAfter = summedVolume(objs, (o) => (results.has(o.key) ? Math.abs(meshVolume(results.get(o.key))) : orientedVolume(meshes.get(o.key))));
   const { bytes, paintLost } = write3mf(parsed, results);
   return { format: '3mf', timeFix, before, after, volumeBefore, volumeAfter, bytes, paintLost, afterMesh, watertight: isWatertight(after) };
 }

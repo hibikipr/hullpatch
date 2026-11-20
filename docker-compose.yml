@@ -45,9 +45,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # A 150 MB mesh can need around 2 GB while it is repaired, per concurrent job.
-    # Uncomment to cap it (lower HULLPATCH_API_CONCURRENCY if you set this low):
-    # mem_limit: 4g
+    # A repair peaks at about 1.5-2 KB per triangle, per concurrent job. Keep
+    # HULLPATCH_API_MAX_TRIANGLES x 2 KB x HULLPATCH_API_CONCURRENCY under this limit
+    # (defaults: 2.5M triangles, concurrency 2, so about 10 GB; or concurrency 1 for 6g).
+    # mem_limit only works where the kernel has memory cgroups enabled.
+    # mem_limit: 6g
 
 secrets:
   hullpatch_api_keys:

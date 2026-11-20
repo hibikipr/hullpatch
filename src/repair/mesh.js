@@ -443,8 +443,10 @@ function nestedPatches(verts, faces, comp, comps, vol) {
   for (const c of order) {
     if (vol[c] === 0) continue;
     const f0 = firstFace[c];
-    const p = [0, 0, 0];
-    for (let k = 0; k < 3; k++) for (let d = 0; d < 3; d++) p[d] += verts[faces[f0 * 3 + k] * 3 + d] / 3;
+    // A point inside the face, off its centre and medians: a ray from the exact centre of
+    // a face on a grid can run straight through another face's edge and count it twice.
+    const p = [0, 0, 0], w = [0.36, 0.31, 0.33];
+    for (let k = 0; k < 3; k++) for (let d = 0; d < 3; d++) p[d] += verts[faces[f0 * 3 + k] * 3 + d] * w[k];
     let crossings = 0;
     for (let f = 0; f < F; f++) {
       const cf = comp[f];
@@ -593,6 +595,19 @@ function splitTJunction(verts, faces, loop, edges, V, removed, added) {
   return true;
 }
 
+/** Edges used by one face (naked) and by more than two (non-manifold). */
+function edgeProblems(faces, V) {
+  const { head, next } = buildEdges(faces, V);
+  let naked = 0, nonManifold = 0;
+  for (const he0 of head.values()) {
+    let c = 0;
+    for (let he = he0; he !== -1; he = next[he]) c++;
+    if (c === 1) naked++;
+    else if (c >= 3) nonManifold++;
+  }
+  return { naked, nonManifold };
+}
+
 /** Faces that touch an edge used by more than two faces. */
 function nonManifoldFaces(faces, V) {
   const { head, next } = buildEdges(faces, V);
@@ -615,13 +630,14 @@ function nonManifoldFaces(faces, V) {
  * each end vertex fall into fans (joined across two-face edges and across those
  * pairs), and every fan but the first gets its own copy of the vertex, at the same
  * position. Nothing moves and no face is removed, so the volume is unchanged.
+ * geometricOnly: only pairings the geometry agrees with (no crossing slivers).
  * Rewrites faces in place; returns how many vertex copies were made.
  * (A file format that joins vertices by position, like STL, will glue them again.)
  */
-function splitPinchedEdges(verts, faces, V, addVertex) {
+function splitPinchedEdges(verts, faces, V, addVertex, geometricOnly = false) {
   const { head, next } = buildEdges(faces, V);
   const partner = new Map(); // half-edge -> the half-edge of the face it pairs with
-  const ends = new Set();
+  const ends = new Set(), pinched = [];
   const hes = [];
   for (const he0 of head.values()) {
     hes.length = 0;
@@ -666,14 +682,9 @@ function splitPinchedEdges(verts, faces, V, addVertex) {
       items.push({ he, angle, back: side > 0 ? -1 : 1, forward: a === x });
     }
     if (!ok) continue;
-    items.sort((p, q) => p.angle - q.angle);
-    const pairOf = (i) => (i + items[i].back + n) % n;
-    for (let i = 0; i < n && ok; i++) {
-      const j = pairOf(i);
-      if (pairOf(j) !== i || items[i].forward === items[j].forward) ok = false;
-    }
-    if (!ok) continue;
-    for (let i = 0; i < n; i++) partner.set(items[i].he, items[pairOf(i)].he);
+    const cands = pairPinchedFaces(items, n, geometricOnly);
+    if (!cands.length) continue;
+    pinched.push({ x, y, cands: cands.map((c) => c.map(([i, j]) => [items[i].he, items[j].he])), choice: 0 });
     ends.add(x); ends.add(y);
   }
   if (!ends.size) return 0;
@@ -684,8 +695,8 @@ function splitPinchedEdges(verts, faces, V, addVertex) {
   for (let f = 0; f < faces.length / 3; f++) {
     for (let k = 0; k < 3; k++) { const l = around.get(faces[f * 3 + k]); if (l) l.push(f); }
   }
-  const changes = [];
-  for (const [v, list] of around) {
+  const fansAt = (v) => {
+    const list = around.get(v);
     const idx = new Map(list.map((f, i) => [f, i]));
     const par = list.map((_, i) => i);
     const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
@@ -701,20 +712,176 @@ function splitPinchedEdges(verts, faces, V, addVertex) {
         for (let h = h0; h !== -1; h = next[h]) if (idx.has((h / 3) | 0)) join(f, (h / 3) | 0);
       }
     }
-    const fans = new Map();
-    list.forEach((f, i) => { const r = find(i); if (!fans.has(r)) fans.set(r, []); fans.get(r).push(f); });
+    const fanOf = new Map();
+    list.forEach((f, i) => fanOf.set(f, find(i)));
+    return fanOf;
+  };
+  // An edge comes apart when no two of its pairs share a fan at both ends. Pairs that
+  // look right at the edge can still join up around an end vertex (the sheets are one
+  // surface there), and edges that share an end vertex decide each other's fans. So for
+  // each group of such edges joined by end vertices, when the first choices leave one
+  // whole, try every combination of their ways of pairing (a bounded number) and keep
+  // the one that takes the most edges apart, earlier (better) choices first.
+  const setPartners = (e) => { for (const [p, q] of e.cands[e.choice]) { partner.set(p, q); partner.set(q, p); } };
+  const apartCount = (group, verts) => {
+    const fanAt = new Map();
+    for (const v of verts) fanAt.set(v, fansAt(v));
+    let n = 0;
+    for (const e of group) {
+      const fx = fanAt.get(e.x), fy = fanAt.get(e.y), seen = new Set();
+      let apart = true;
+      for (const [p] of e.cands[e.choice]) {
+        const key = fx.get((p / 3) | 0) + ',' + fy.get((p / 3) | 0);
+        if (seen.has(key)) apart = false;
+        seen.add(key);
+      }
+      if (apart) n++;
+    }
+    return n;
+  };
+  for (const e of pinched) setPartners(e);
+  const groupOf = new Map();
+  for (const e of pinched) {
+    let g = groupOf.get(e.x) || groupOf.get(e.y);
+    if (!g) g = { edges: [], verts: new Set() };
+    const other = groupOf.get(e.x) && groupOf.get(e.y) && groupOf.get(e.x) !== groupOf.get(e.y) ? groupOf.get(e.y) : null;
+    if (other) { // merge the second group into the first
+      for (const o of other.edges) g.edges.push(o);
+      for (const v of other.verts) { g.verts.add(v); groupOf.set(v, g); }
+    }
+    g.edges.push(e); g.verts.add(e.x); g.verts.add(e.y);
+    groupOf.set(e.x, g); groupOf.set(e.y, g);
+  }
+  for (const g of new Set(groupOf.values())) {
+    const { edges } = g;
+    if (apartCount(edges, g.verts) === edges.length) continue;
+    let combos = 1;
+    for (const e of edges) combos *= e.cands.length;
+    if (combos > 256) continue;
+    let best = -1, bestChoice = null;
+    for (let c = 0; c < combos; c++) {
+      let r = c;
+      for (const e of edges) { e.choice = r % e.cands.length; r = Math.floor(r / e.cands.length); }
+      for (const e of edges) for (const [p, q] of e.cands[0].concat(...e.cands.slice(1))) { partner.delete(p); partner.delete(q); }
+      for (const e of edges) setPartners(e);
+      const n = apartCount(edges, g.verts);
+      if (n > best) { best = n; bestChoice = edges.map((e) => e.choice); }
+      if (n === edges.length) break;
+    }
+    edges.forEach((e, i) => { e.choice = bestChoice[i]; });
+    for (const e of edges) for (const [p, q] of e.cands[0].concat(...e.cands.slice(1))) { partner.delete(p); partner.delete(q); }
+    for (const e of edges) setPartners(e);
+  }
+  const fans = new Map();
+  for (const v of ends) fans.set(v, fansAt(v));
+  const changes = [];
+  for (const [v, fanOf] of fans) {
+    const groups = new Map();
+    for (const [f, r] of fanOf) { if (!groups.has(r)) groups.set(r, []); groups.get(r).push(f); }
     let firstFan = true;
-    for (const fan of fans.values()) {
+    for (const fan of groups.values()) {
       if (firstFan) { firstFan = false; continue; }
       changes.push(v, fan);
     }
   }
   for (let i = 0; i < changes.length; i += 2) {
     const v = changes[i];
-    const copy = addVertex(verts[v * 3], verts[v * 3 + 1], verts[v * 3 + 2]);
+    const copy = addVertex(verts[v * 3], verts[v * 3 + 1], verts[v * 3 + 2], v);
     for (const f of changes[i + 1]) for (let k = 0; k < 3; k++) if (faces[f * 3 + k] === v) faces[f * 3 + k] = copy;
   }
   return changes.length / 2;
+}
+
+/**
+ * Pair up the faces around a pinched edge (items: {angle, back, forward}), as a list
+ * of index pairs, or null. First by the geometry: each face pairs with its angular
+ * neighbour on its solid side. Faces in one plane (a sheet folded flat onto itself)
+ * tie on angle, so every order of the tied faces is tried. When no order works,
+ * the faces cross each other at the edge (slivers far smaller than the print can
+ * show): then pair angular neighbours that run the edge opposite ways, as a slicer
+ * does when it matches edges by direction, taking the split that agrees best with
+ * the geometry. Every pair runs the edge in opposite directions.
+ */
+function pairPinchedFaces(items, n, geometricOnly = false) {
+  let fwd = 0;
+  for (const it of items) {
+    let a = it.angle < 0 ? it.angle + 2 * Math.PI : it.angle;
+    if (a >= 2 * Math.PI - 1e-9) a = 0;
+    it.angle = a;
+    if (it.forward) fwd++;
+  }
+  if (fwd * 2 !== n) return [];
+  items.sort((p, q) => p.angle - q.angle);
+  // Groups of tied angles (the last group can wrap around to angle 0).
+  const groups = [];
+  for (let i = 0; i < n; i++) {
+    if (i && items[i].angle - items[i - 1].angle <= 1e-9) groups[groups.length - 1].push(i);
+    else groups.push([i]);
+  }
+  const consistent = (order) => {
+    const pairs = [];
+    for (let p = 0; p < n; p++) {
+      const q = (p + items[order[p]].back + n) % n;
+      if ((q + items[order[q]].back + n) % n !== p || items[order[p]].forward === items[order[q]].forward) return null;
+      if (p < q) pairs.push([order[p], order[q]]);
+    }
+    return pairs;
+  };
+  // Every order of the tied faces, capped; each distinct pairing found is a candidate.
+  const order = [], out = [], seen = new Set();
+  let tries = 0;
+  const permute = (g) => {
+    if (tries > 720) return;
+    if (g === groups.length) {
+      tries++;
+      const pairs = consistent(order);
+      if (pairs) {
+        const key = pairs.map(([i, j]) => Math.min(i, j) + '-' + Math.max(i, j)).sort().join(' ');
+        if (!seen.has(key)) { seen.add(key); out.push(pairs); }
+      }
+      return;
+    }
+    const go = (left) => {
+      if (!left.length) { permute(g + 1); return; }
+      for (let i = 0; i < left.length; i++) {
+        order.push(left[i]);
+        go(left.slice(0, i).concat(left.slice(i + 1)));
+        order.pop();
+      }
+    };
+    go(groups[g]);
+  };
+  permute(0);
+  // Last resort, after the pairings above: on a four-face edge, the other way of pairing
+  // the two faces that run it one way with the two that run it the other way.
+  const add = (list) => {
+    const keys = new Set(list.map((pairs) => pairs.map(([i, j]) => Math.min(i, j) + '-' + Math.max(i, j)).sort().join(' ')));
+    if (n !== 4) return list;
+    const f = [0, 1, 2, 3].filter((i) => items[i].forward), b = [0, 1, 2, 3].filter((i) => !items[i].forward);
+    for (const pairs of [[[f[0], b[0]], [f[1], b[1]]], [[f[0], b[1]], [f[1], b[0]]]]) {
+      const key = pairs.map(([i, j]) => Math.min(i, j) + '-' + Math.max(i, j)).sort().join(' ');
+      if (!keys.has(key)) { keys.add(key); list.push(pairs); }
+    }
+    return list;
+  };
+  if (geometricOnly) return out;
+  if (out.length) return add(out);
+  // Crossing slivers: the ways to pair neighbours in angle order whose pairs all run
+  // opposite ways, the one more faces' solid side agrees with first.
+  const fallback = [];
+  for (let shift = 0; shift < 2; shift++) {
+    const pairs = [];
+    let score = 0;
+    for (let p = shift; p < n + shift; p += 2) {
+      const i = p % n, j = (p + 1) % n;
+      if (items[i].forward === items[j].forward) { score = -1; break; }
+      if (items[i].back === 1) score++;
+      if (items[j].back === -1) score++;
+      pairs.push([i, j]);
+    }
+    if (score >= 0) fallback.push({ pairs, score });
+  }
+  return add(fallback.sort((p, q) => q.score - p.score).map((c) => c.pairs));
 }
 
 /** Ear-clip a loop projected onto its own plane; falls back to a fan around a new centre point. */
@@ -916,29 +1083,121 @@ export function repair(mesh, onProgress = () => {}) {
   onProgress(0.2);
 
   const first = reorient(mesh.verts);
+  // The deduped, oriented mesh: a safe result to fall back on (see the end).
+  const oriented = { faces: faces.slice(), org: org.slice(), cor: cor.slice() };
   if (first.conflicts.length) cutConflicts(first.conflicts);
   onProgress(0.4);
   closeHoles(0.4, 0.8);
 
   // Sheets that only touch along an edge (an even number of faces on it that pair
   // up): give each sheet its own copy of the edge's vertices instead of cutting.
-  faces = faces.slice();
-  splitPinchedEdges(allVerts(), faces, V, addVertex);
-
-  // Edges still shared by more than two faces (touching shells, stray internal faces):
-  // remove the faces on them and close the resulting holes, a few rounds at most.
-  // Kept only if the solid keeps its volume: a manifold mesh of the wrong shape is worse.
-  const beforeCleanup = { faces, org, cor };
+  // Copies of a vertex made here are remembered, to order the output for STL readers.
+  const copyOf = new Map();
+  const addCopy = (x, y, z, of) => { const v = addVertex(x, y, z); copyOf.set(v, copyOf.get(of) ?? of); return v; };
+  const splitPinched = (geometricOnly) => splitPinchedEdges(allVerts(), faces, V, addCopy, geometricOnly);
+  // STL keeps no vertex indices, so a reader joins the copies again by position and
+  // must pair the faces on such an edge itself. Slicers built on admesh (Bambu Studio,
+  // PrusaSlicer) pair them in file order: first with second, third with fourth. So list
+  // the faces on each of these edges sheet by sheet (the two faces that share the
+  // edge's copied vertices next to each other), at the end of the list.
+  const orderPinchedPairs = () => {
+    const F = faces.length / 3;
+    const root = (v) => copyOf.get(v) ?? v;
+    const split = new Set(copyOf.values());
+    const byPlace = new Map(); // edge between the original vertices -> [face, edge key, ...]
+    for (let f = 0; f < F; f++) {
+      for (let k = 0; k < 3; k++) {
+        const a = root(faces[f * 3 + k]), b = root(faces[f * 3 + ((k + 1) % 3)]);
+        if (!split.has(a) && !split.has(b)) continue;
+        const key = edgeKey(a, b, V);
+        let l = byPlace.get(key);
+        if (!l) byPlace.set(key, (l = []));
+        l.push(f, edgeKey(faces[f * 3 + k], faces[f * 3 + ((k + 1) % 3)], V));
+      }
+    }
+    // Edges whose faces are not yet listed sheet by sheet, and every such edge sharing
+    // a face with one (moving that face would upset it).
+    const pinched = [], faceEdges = new Map();
+    for (const l of byPlace.values()) {
+      if (l.length <= 4) continue; // two faces: an ordinary edge
+      const sheets = new Map();
+      for (let i = 0; i < l.length; i += 2) {
+        if (!sheets.has(l[i + 1])) sheets.set(l[i + 1], []);
+        sheets.get(l[i + 1]).push(l[i]);
+      }
+      const inOrder = l.filter((_, i) => i % 2 === 0).sort((a, b) => a - b);
+      const sheetOf = new Map();
+      for (const [key, fs] of sheets) for (const f of fs) sheetOf.set(f, key);
+      let ok = true;
+      for (let i = 0; i + 1 < inOrder.length; i += 2) if (sheetOf.get(inOrder[i]) !== sheetOf.get(inOrder[i + 1])) ok = false;
+      const e = { sheets, ok };
+      pinched.push(e);
+      for (const f of inOrder) { if (!faceEdges.has(f)) faceEdges.set(f, []); faceEdges.get(f).push(e); }
+    }
+    const todo = pinched.filter((e) => !e.ok);
+    for (let i = 0; i < todo.length; i++) {
+      for (const fs of todo[i].sheets.values()) for (const f of fs) for (const e of faceEdges.get(f)) if (e.ok) { e.ok = false; todo.push(e); }
+    }
+    // Each face's partners: the other face on the same copy of each such edge.
+    const partners = new Map(), edgesHere = [];
+    for (const { sheets } of todo) {
+      for (const fs of sheets.values()) {
+        if (fs.length !== 2) continue;
+        for (const [f, g] of [fs, [fs[1], fs[0]]]) {
+          if (!partners.has(f)) partners.set(f, []);
+          partners.get(f).push(g);
+        }
+        edgesHere.push(fs[0]);
+      }
+    }
+    if (!edgesHere.length) return;
+    // Place a face and, right after it, its partner on every such edge it is on, so a
+    // face on two of these edges keeps both of its pairs together.
+    const placed = new Uint8Array(F), tail = [];
+    const place = (f) => {
+      const stack = [f];
+      while (stack.length) {
+        const g = stack.pop();
+        if (placed[g]) continue;
+        placed[g] = 1; tail.push(g);
+        const ps = partners.get(g) || [];
+        for (let i = ps.length - 1; i >= 0; i--) stack.push(ps[i]);
+      }
+    };
+    for (const f of edgesHere) place(f);
+    const keep = [];
+    for (let f = 0; f < F; f++) if (!placed[f]) keep.push(f);
+    rebuild(keep.concat(tail));
+  };
   const volumeOf = (fs) => {
     const vs = allVerts();
     let s = 0;
     for (let f = 0; f < fs.length / 3; f++) s += signedVolume(vs, fs[f * 3], fs[f * 3 + 1], fs[f * 3 + 2]);
     return s;
   };
+  // Splitting moves nothing, but sheets that cross at the edge become solids that
+  // overlap, and orienting can then take one for a cavity of the other and turn it
+  // inside out. So keep the split only if the oriented volume stays the same; else try
+  // again with the geometry's pairings alone, and else leave those edges to the cleanup.
+  const unsplit = faces;
+  faces = faces.slice();
+  if (splitPinched()) {
+    const v0 = Math.abs(volumeOf(orient(allVerts(), unsplit, V).faces));
+    const keeps = () => Math.abs(Math.abs(volumeOf(orient(allVerts(), faces, V).faces)) - v0) <= Math.max(v0, 1e-30) * 1e-3;
+    if (!keeps()) {
+      faces = unsplit.slice();
+      if (splitPinched(true) && !keeps()) faces = unsplit.slice();
+    }
+  }
+
+  // Edges still shared by more than two faces (touching shells, stray internal faces):
+  // remove the faces on them and close the resulting holes, a few rounds at most.
+  // Kept only if the solid keeps its volume: a manifold mesh of the wrong shape is worse.
+  const beforeCleanup = { faces, org, cor };
   let cleaned = false;
   for (let round = 0; round < 3; round++) {
     // Caps from the previous round can meet along an edge too.
-    if (round) splitPinchedEdges(allVerts(), faces, V, addVertex);
+    if (round) splitPinched();
     const bad = nonManifoldFaces(faces, V);
     if (!bad.size) break;
     cleaned = true;
@@ -951,9 +1210,19 @@ export function repair(mesh, onProgress = () => {}) {
     rebuild(null, added);
   }
   if (cleaned) {
-    const v0 = Math.abs(volumeOf(orient(allVerts(), beforeCleanup.faces, V).faces));
-    const v1 = Math.abs(volumeOf(orient(allVerts(), faces, V).faces));
-    if (Math.abs(v1 - v0) > Math.max(v0, 1e-30) * 1e-3) ({ faces, org, cor } = beforeCleanup);
+    const vs = allVerts();
+    const v0 = Math.abs(volumeOf(orient(vs, beforeCleanup.faces, V).faces));
+    const v1 = Math.abs(volumeOf(orient(vs, faces, V).faces));
+    // Also only if it leaves fewer bad edges, counted once faces with no area are gone
+    // (as they are at the end): caps across a loop of points in a line have no area,
+    // and dropping them would open the holes again.
+    const sound = (fs) => {
+      const keep = [];
+      for (let f = 0; f < fs.length / 3; f++) if (!isDegenerate(vs, fs, f, areaEps)) keep.push(fs[f * 3], fs[f * 3 + 1], fs[f * 3 + 2]);
+      const c = edgeProblems(keep, V);
+      return c.naked + c.nonManifold;
+    };
+    if (Math.abs(v1 - v0) > Math.max(v0, 1e-30) * 1e-3 || sound(faces) >= sound(beforeCleanup.faces)) ({ faces, org, cor } = beforeCleanup);
   }
   onProgress(0.85);
 
@@ -967,6 +1236,26 @@ export function repair(mesh, onProgress = () => {}) {
   }
   const verts = allVerts();
   keepWhere((f) => !isDegenerate(verts, faces, f, areaEps));
+  if (copyOf.size) orderPinchedPairs();
+
+  // Do no harm: if all this left the part worse than it came in (more open, non-manifold
+  // or conflicting edges, or more faces wound the wrong way), give back the deduped and
+  // oriented mesh, or failing that the input with only its windings turned.
+  const score = (a) => [a.NakedEdges + a.NonManifoldEdges + a.OrientationConflicts, a.InvertedNormals];
+  const worse = (a, b) => a[0] > b[0] || a[1] > b[1];
+  const input = score(analyze(mesh));
+  if (worse(score(analyze({ verts, faces, vCount: V, diag })), input)) {
+    ({ faces, org, cor } = oriented);
+    if (worse(score(analyze({ verts, faces, vCount: V, diag })), input)) {
+      const o = orient(mesh.verts, mesh.faces, mesh.vCount);
+      faces = o.faces; org = Int32Array.from({ length: faces.length / 3 }, (_, f) => f); cor = new Uint8Array(faces.length);
+      for (let f = 0; f < org.length; f++) { cor[f * 3 + 1] = o.flip[f] ? 2 : 1; cor[f * 3 + 2] = o.flip[f] ? 1 : 2; }
+      if (worse(score(analyze({ verts, faces, vCount: V, diag })), input)) {
+        faces = mesh.faces.slice(); cor = new Uint8Array(faces.length);
+        for (let f = 0; f < org.length; f++) { cor[f * 3 + 1] = 1; cor[f * 3 + 2] = 2; }
+      }
+    }
+  }
 
   const used = new Uint8Array(V);
   for (const v of faces) used[v] = 1;
