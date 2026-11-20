@@ -200,6 +200,12 @@ try {
   const e = await post(t.port, '/api/v1/repair', stl, 'model/stl');
   check2('api: a file within the limits still repairs', e.status === 200 && /watertight=1/.test(e.headers['hullpatch-report']));
   await t.api.close(500);
+
+  // The bytes win over a wrong Content-Type: a zip sent as model/stl is still a 3MF.
+  const v = await mk({});
+  const w = await post(v.port, '/api/v1/repair', threeMf, 'model/stl');
+  check2('api: a 3MF sent as model/stl is still repaired as a 3MF', w.status === 200 && w.headers['content-type'] === 'model/3mf' && w.body[0] === 0x50 && w.body[1] === 0x4b);
+  await v.api.close(500);
 }
 
 console.log = realLog;

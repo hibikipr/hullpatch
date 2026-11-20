@@ -146,9 +146,10 @@ export function createApi(config) {
       name = part.filename || name;
       if (!data.length) throw new HttpError(400, 'empty file');
       format = sniff(data);
-    } else if (STL_TYPES.has(type)) format = 'stl';
+    } else if (sniff(data) === '3mf') format = '3mf'; // a zip is a 3MF, whatever the declared type
+    else if (STL_TYPES.has(type)) format = 'stl';
     else if (MF_TYPES.has(type)) format = '3mf';
-    else format = sniff(data);
+    else format = 'stl';
     if (!name) name = 'model.' + format;
     log.name = name.slice(0, 80);
     log.format = format;

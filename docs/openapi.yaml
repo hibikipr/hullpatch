@@ -1,0 +1,590 @@
+openapi: 3.1.0
+info:
+  title: Hullpatch API
+  version: 1.0.0
+  summary: Repair STL and 3MF files over HTTP.
+  description: |
+    The optional HTTP API for [Hullpatch](https://hibikipr.github.io/hullpatch/). It runs the
+    same repair engine as the web page, as a separate service
+    (`ghcr.io/hibikipr/hullpatch-api`). Files are received and repaired in memory on your
+    own server; nothing is written to disk and logs never contain file contents or keys.
+
+    With no API key configured, every endpoint except health answers 503 (fail closed).
+    Full documentation: https://hibikipr.github.io/hullpatch/api.html
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+externalDocs:
+  description: API reference
+  url: https://hibikipr.github.io/hullpatch/api.html
+servers:
+  - url: http://localhost:8081
+    description: A local container (default port)
+  - url: https://stlrepair.townsville.cc
+    description: Example host (the author's LAN); replace with your own
+security:
+  - bearerAuth: []
+tags:
+  - name: Service
+    description: Liveness check.
+  - name: Repair
+    description: Repair or analyze an STL or 3MF.
+paths:
+  /api/v1/health:
+    get:
+      operationId: health
+      tags: [Service]
+      summary: Health check
+      description: No API key needed. Also answers HEAD. A trailing slash is ignored.
+      security: []
+      responses:
+        '200':
+          description: The service is up.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example: { status: ok, version: 1.0.0, keys: true }
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedHealth'
+  /api/v1/repair:
+    post:
+      operationId: repair
+      tags: [Repair]
+      summary: Repair an STL or 3MF
+      description: |
+        Repairs the file and returns it in the same format (`<name>_fixed.stl` or
+        `<name>_fixed.3mf`), or as a JSON report with `report=json`.
+
+        A 3MF keeps its plates, settings, transforms and colours; only the mesh of the
+        repaired parts changes. By default only parts with problems are repaired
+        (`parts=all` repairs every normal part). Negative parts, modifiers and support
+        blockers or enforcers are never repaired.
+
+        Checks run in this order: route (404), keys configured (503), key (401), method
+        (405), `format` and `parts` (400), queue (429), body size (413), body and multipart
+        (400), then the repair (413, 422, 503). When a request is rejected before its body is
+        read, the server closes the connection after answering.
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: format
+          in: query
+          required: false
+          description: |
+            Output format, case-insensitive. `stl` turns a 3MF into one STL of the whole
+            model. `3mf` is only valid for 3MF input: an STL input with `format=3mf` is a 422.
+            Any other value is a 400.
+          schema:
+            type: string
+            enum: [stl, 3mf]
+        - name: parts
+          in: query
+          required: false
+          description: |
+            3MF only. `all` repairs every normal part instead of only parts with problems.
+            Any other value is a 400, even for an STL input.
+          schema:
+            type: string
+            const: all
+        - name: report
+          in: query
+          required: false
+          description: '`json` returns a JSON report with the repaired file as base64 instead of the file. Any other value is ignored.'
+          schema:
+            type: string
+            enum: [json]
+      requestBody:
+        $ref: '#/components/requestBodies/Model'
+      responses:
+        '200':
+          description: |
+            The repaired file, or the JSON report when `report=json`. The `Hullpatch-Report`
+            header is present in both cases.
+          headers:
+            Hullpatch-Report:
+              $ref: '#/components/headers/HullpatchReport'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            model/stl:
+              schema:
+                type: string
+                contentMediaType: model/stl
+                contentEncoding: binary
+                description: Binary STL, when the output is an STL and `report` is not `json`.
+            model/3mf:
+              schema:
+                type: string
+                contentMediaType: model/3mf
+                contentEncoding: binary
+                description: A 3MF archive, when the output is a 3MF and `report` is not `json`.
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepairReport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedPost'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/analyze:
+    post:
+      operationId: analyze
+      tags: [Repair]
+      summary: Count problems without repairing
+      description: |
+        Takes the same request body as `/repair` and returns problem counts as JSON. For a
+        3MF the response also lists its normal parts. `format`, `parts` and `report` have no
+        effect here, except that a bad `format` or `parts` value is still a 400.
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: format
+          in: query
+          required: false
+          description: "Ignored, but validated: a value other than `stl` or `3mf` is a 400."
+          schema:
+            type: string
+            enum: [stl, 3mf]
+        - name: parts
+          in: query
+          required: false
+          description: "Ignored, but validated: a value other than `all` is a 400."
+          schema:
+            type: string
+            const: all
+      requestBody:
+        $ref: '#/components/requestBodies/Model'
+      responses:
+        '200':
+          description: Problem counts.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResult'
+              examples:
+                stl:
+                  summary: Binary STL of a unit cube with one triangle missing
+                  value:
+                    format: stl
+                    analysis:
+                      NakedEdges: 3
+                      PlanarHoles: 1
+                      NonPlanarHoles: 0
+                      NonManifoldEdges: 0
+                      InvertedNormals: 0
+                      OrientationConflicts: 0
+                      DuplicateFaces: 0
+                      DegenerateFaces: 0
+                      DisjointShells: 0
+                      VerticesCount: 8
+                      FaceCount: 11
+                    volume: 0.9999999999999999
+                    watertight: false
+                3mf:
+                  summary: A 3MF with one broken and one good cube
+                  value:
+                    format: 3mf
+                    analysis:
+                      NakedEdges: 3
+                      PlanarHoles: 1
+                      NonPlanarHoles: 0
+                      NonManifoldEdges: 0
+                      InvertedNormals: 0
+                      OrientationConflicts: 0
+                      DuplicateFaces: 0
+                      DegenerateFaces: 0
+                      VerticesCount: 16
+                      FaceCount: 23
+                      DisjointShells: 2
+                    volume: 2
+                    watertight: false
+                    parts:
+                      - { name: Broken cube, group: Broken cube, plate: null, triangles: 11, problems: 3 }
+                      - { name: Good cube, group: Good cube, plate: null, triangles: 12, problems: 0 }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowedPost'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        One of the keys in `HULLPATCH_API_KEYS` or `HULLPATCH_API_KEYS_FILE`, sent as
+        `Authorization: Bearer <key>`. Compared in constant time.
+  parameters:
+    name:
+      name: name
+      in: query
+      required: false
+      description: |
+        Name for a raw upload, used for the download file name (`<name>_fixed.stl`). Path,
+        a trailing `.stl` or `.3mf`, and control characters are removed and the name is cut
+        to 80 characters. Defaults to `model`. For a multipart upload the part's filename wins.
+      schema:
+        type: string
+        examples: [part.stl]
+  requestBodies:
+    Model:
+      required: true
+      description: |
+        The file, as a raw body or as a multipart form with a `file` field. The bytes
+        come first: a body that starts with a ZIP header (`PK\x03\x04`) is a 3MF,
+        whatever its declared type. Otherwise a 3MF type means 3MF and anything else
+        (including `application/octet-stream`) is read as STL. The upload limit is 150 MB
+        by default.
+      content:
+        model/stl:
+          schema:
+            type: string
+            contentMediaType: model/stl
+            contentEncoding: binary
+            description: |
+              Binary or ASCII STL. `application/sla`, `application/vnd.ms-pki.stl` and
+              `application/x-stl` are accepted as aliases.
+        model/3mf:
+          schema:
+            type: string
+            contentMediaType: model/3mf
+            contentEncoding: binary
+            description: |
+              A 3MF archive. `application/vnd.ms-package.3dmanufacturing-3dmodel+xml` is
+              accepted as an alias.
+        application/octet-stream:
+          schema:
+            type: string
+            contentMediaType: application/octet-stream
+            contentEncoding: binary
+            description: STL or 3MF, detected from the first bytes.
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file:
+                type: string
+                contentMediaType: application/octet-stream
+                contentEncoding: binary
+                description: The STL or 3MF, sent with a filename. Other fields are ignored.
+          encoding:
+            file:
+              contentType: application/octet-stream
+  headers:
+    HullpatchReport:
+      description: |
+        Summary of the repaired file. `open` is `NakedEdges`, `nonmanifold` is
+        `NonManifoldEdges`, `flipped` is `InvertedNormals`, `conflicts` is
+        `OrientationConflicts`, all after repair; `watertight` is 1 or 0.
+      schema:
+        type: string
+        pattern: '^open=\d+; nonmanifold=\d+; flipped=\d+; conflicts=\d+; watertight=[01]$'
+        examples: ['open=0; nonmanifold=0; flipped=0; conflicts=0; watertight=1']
+    ContentDisposition:
+      description: |
+        Attachment with the download name, `<name>_fixed.stl` or `<name>_fixed.3mf`: an
+        ASCII fallback in `filename` and the UTF-8 form in `filename*`. Sent with the file
+        response only, not with `report=json`.
+      schema:
+        type: string
+        examples: ['attachment; filename="part_fixed.stl"; filename*=UTF-8''part_fixed.stl']
+    RetryAfter:
+      description: Seconds to wait before trying again. Always 10.
+      schema:
+        type: integer
+        const: 10
+    WWWAuthenticate:
+      description: Always `Bearer`.
+      schema:
+        type: string
+        const: Bearer
+  schemas:
+    Health:
+      type: object
+      required: [status, version, keys]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+          description: '`HULLPATCH_VERSION`; `dev` unless set (the image sets it from the release tag).'
+        keys:
+          type: boolean
+          description: Whether at least one API key is configured.
+    Analysis:
+      type: object
+      description: |
+        Problem counts for a mesh, after welding vertices at the same position. For a 3MF,
+        counts are summed over the normal parts, once per place each is printed.
+      required:
+        - NakedEdges
+        - PlanarHoles
+        - NonPlanarHoles
+        - NonManifoldEdges
+        - InvertedNormals
+        - OrientationConflicts
+        - DuplicateFaces
+        - DegenerateFaces
+        - DisjointShells
+        - VerticesCount
+        - FaceCount
+      properties:
+        NakedEdges:
+          type: integer
+          minimum: 0
+          description: Edges used by only one face (the outline of holes).
+        PlanarHoles:
+          type: integer
+          minimum: 0
+          description: Boundary loops that lie flat in one plane.
+        NonPlanarHoles:
+          type: integer
+          minimum: 0
+          description: Boundary loops that do not lie flat.
+        NonManifoldEdges:
+          type: integer
+          minimum: 0
+          description: Edges shared by three or more faces.
+        InvertedNormals:
+          type: integer
+          minimum: 0
+          description: Faces wound inward, once neighbours are made consistent.
+        OrientationConflicts:
+          type: integer
+          minimum: 0
+          description: Edges where no winding can make the two sides agree.
+        DuplicateFaces:
+          type: integer
+          minimum: 0
+          description: Faces repeating another face's three corners.
+        DegenerateFaces:
+          type: integer
+          minimum: 0
+          description: Faces with (nearly) zero area.
+        DisjointShells:
+          type: integer
+          minimum: 0
+          description: Number of separate connected pieces, or 0 when there is only one.
+        VerticesCount:
+          type: integer
+          minimum: 0
+          description: Vertices after welding.
+        FaceCount:
+          type: integer
+          minimum: 0
+          description: Triangles.
+    Part:
+      type: object
+      description: A normal part of a 3MF.
+      required: [name, group, plate, triangles, problems]
+      properties:
+        name:
+          type: string
+        group:
+          type: string
+          description: The top-level object the part belongs to.
+        plate:
+          type: [integer, 'null']
+          description: Bambu Studio plate number, or null when the file has none.
+        triangles:
+          type: integer
+          minimum: 0
+        problems:
+          type: integer
+          minimum: 0
+          description: NakedEdges + NonManifoldEdges + InvertedNormals + OrientationConflicts + DuplicateFaces + DegenerateFaces. Parts above 0 are repaired by default.
+    AnalyzeResult:
+      type: object
+      required: [format, analysis, volume, watertight]
+      properties:
+        format:
+          type: string
+          enum: [stl, 3mf]
+          description: The detected input format.
+        analysis:
+          $ref: '#/components/schemas/Analysis'
+        volume:
+          type: number
+          description: Enclosed volume with faces turned outward, in cubic model units.
+        watertight:
+          type: boolean
+          description: True when NakedEdges, NonManifoldEdges, InvertedNormals and OrientationConflicts are all 0.
+        parts:
+          type: array
+          description: Present for a 3MF only.
+          items:
+            $ref: '#/components/schemas/Part'
+    RepairReport:
+      type: object
+      required: [before, after, volumeBefore, volumeAfter, watertight, filename, format, file]
+      properties:
+        before:
+          $ref: '#/components/schemas/Analysis'
+        after:
+          $ref: '#/components/schemas/Analysis'
+        volumeBefore:
+          type: number
+          description: Volume of the input, measured with faces turned outward.
+        volumeAfter:
+          type: number
+        watertight:
+          type: boolean
+          description: True when NakedEdges, NonManifoldEdges, InvertedNormals and OrientationConflicts are all 0 after repair.
+        paintLost:
+          type: integer
+          minimum: 0
+          description: 3MF input only. Triangles that lost their Bambu paint because the repair replaced them.
+        filename:
+          type: string
+          examples: [model_fixed.stl]
+        format:
+          type: string
+          enum: [stl, 3mf]
+          description: Format of `file`.
+        file:
+          type: string
+          contentEncoding: base64
+          description: The repaired file, base64.
+      examples:
+        - before: { NakedEdges: 3, PlanarHoles: 1, NonPlanarHoles: 0, NonManifoldEdges: 0, InvertedNormals: 0, OrientationConflicts: 0, DuplicateFaces: 0, DegenerateFaces: 0, DisjointShells: 0, VerticesCount: 8, FaceCount: 11 }
+          after: { NakedEdges: 0, PlanarHoles: 0, NonPlanarHoles: 0, NonManifoldEdges: 0, InvertedNormals: 0, OrientationConflicts: 0, DuplicateFaces: 0, DegenerateFaces: 0, DisjointShells: 0, VerticesCount: 8, FaceCount: 12 }
+          volumeBefore: 0.9999999999999999
+          volumeAfter: 0.9999999999999999
+          watertight: true
+          filename: model_fixed.stl
+          format: stl
+          file: aHVsbHBhdGNoOiBtb2RlbC5zdGwAAAAA
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+  responses:
+    BadRequest:
+      description: |
+        Empty body (`empty body`), bad `format` (`format must be stl or 3mf`), bad `parts`
+        (`parts must be "all" or omitted`), an empty file part (`empty file`), or a bad
+        multipart body (`multipart body has no boundary`, `multipart body has no "file" field`,
+        `malformed multipart body`, `multipart body is not terminated`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: format must be stl or 3mf }
+    Unauthorized:
+      description: Missing or wrong API key.
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: missing or invalid API key }
+    NotFound:
+      description: No such path.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: not found }
+    MethodNotAllowedPost:
+      description: Wrong method. Only POST is allowed (checked after the key).
+      headers:
+        Allow:
+          schema: { type: string, const: POST }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: method not allowed }
+    MethodNotAllowedHealth:
+      description: Wrong method. Only GET and HEAD are allowed.
+      headers:
+        Allow:
+          schema: { type: string, const: 'GET, HEAD' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: method not allowed }
+    PayloadTooLarge:
+      description: |
+        The upload is over the size limit (`file too large (limit N bytes)`), the model has more
+        triangles than the server allows (`model too large for this server: N triangles to
+        repair (limit M)` or `... N triangles in all (limit M)`), or a 3MF unpacks past the
+        limit (`this 3MF expands to more than N MB`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'model too large for this server: 11 triangles to repair (limit 5)' }
+    Unprocessable:
+      description: |
+        The file can't be read (for example `the file is not a valid binary or ascii stl file`,
+        `the file is not a valid 3mf (zip) archive`, `this 3mf file has no printable mesh
+        objects`), or the output can't be made (`STL input can only be returned as STL`, for
+        `format=3mf` on an STL).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: STL input can only be returned as STL }
+    Busy:
+      description: All workers are busy and the queue is full. Try again after `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'busy, try again shortly' }
+    InternalError:
+      description: Unexpected failure in the server. Details go to the server log only.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: internal error }
+    Unavailable:
+      description: |
+        No API key is configured (`API disabled: set HULLPATCH_API_KEYS`), or the job ran
+        past the timeout (`repair took too long`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'repair took too long' }
