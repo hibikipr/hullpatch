@@ -60,7 +60,13 @@ or keys.
 2. Start the service: `docker compose up -d hullpatch-api` (port 8081).
 
 With no keys configured the API answers 503 "API disabled", so it fails closed.
-A 150 MB mesh can need around 2 GB of memory while it is repaired, per concurrent job.
+A repair needs about 1.5 to 2 KB of memory per triangle at its peak, per concurrent job
+(the 1.9-million-triangle Deku Mask 3MF peaked at 3 GB). A 3MF can unpack to far more than
+its upload size, so the upload limit alone doesn't bound memory: the API refuses a model
+over `HULLPATCH_API_MAX_TRIANGLES` or a 3MF that unpacks past
+`HULLPATCH_API_MAX_UNCOMPRESSED_MB` with a 413, before repairing it. Set those to fit the
+memory the container has. Without them, a model too big for the host gets the container
+killed and the caller only sees a dropped connection.
 
 ### Endpoints
 
@@ -132,7 +138,7 @@ curl -fsS -D - -o /dev/null -X POST https://stlrepair.townsville.cc/api/v1/repai
 | 400 | Empty body, empty file part, bad `format` or `parts` value. |
 | 401 | Missing or wrong key. |
 | 405 | Wrong method. |
-| 413 | Larger than the limit. |
+| 413 | Larger than the upload limit, or a model over the triangle or unpacked-size limit. |
 | 422 | File can't be read (`{"error": …}`), or the output can't be made, such as `?format=3mf` on an STL. |
 | 429 | Queue full. Wait for `Retry-After` and try again. |
 | 503 | API disabled, or the repair took too long. |
@@ -147,6 +153,8 @@ curl -fsS -D - -o /dev/null -X POST https://stlrepair.townsville.cc/api/v1/repai
 | `HULLPATCH_API_QUEUE` | 4 | Requests allowed to wait behind them. |
 | `HULLPATCH_API_MAX_BYTES` | 150 MB | Upload limit. |
 | `HULLPATCH_API_TIMEOUT_MS` | 240000 | A repair that runs longer returns 503. |
+| `HULLPATCH_API_MAX_TRIANGLES` | 2500000 | Larger models get 413 before repair (about 4 GB peak at the default). Triangles count once per placed copy in a 3MF. |
+| `HULLPATCH_API_MAX_UNCOMPRESSED_MB` | 512 | A 3MF that unpacks to more gets 413 before it is unpacked. |
 | `PORT` | 8081 | Listen port. |
 
 ### Behind Nginx Proxy Manager

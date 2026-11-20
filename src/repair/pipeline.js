@@ -6,6 +6,27 @@ import { parse3mf, transformVerts, ThreeMfError, write3mf } from './threemf.js';
 
 export { StlError, ThreeMfError };
 
+/**
+ * A file too big for the memory this process may use. Only thrown when the caller passes
+ * limits (the HTTP API does; the page doesn't, a browser tab has its own memory).
+ * Peak memory is about 1.5 to 2 KB per triangle, so the triangle count is what to cap.
+ */
+export class TooLargeError extends Error {}
+
+// Triangles in a binary STL, from its header, before anything is parsed (null for ASCII:
+// those are about 250 bytes a triangle, so the upload size cap already keeps them small).
+function binaryStlTriangles(buffer) {
+  if (buffer.byteLength < 84) return null;
+  const n = new DataView(buffer, 80, 4).getUint32(0, true);
+  return 84 + n * 50 === buffer.byteLength ? n : null;
+}
+
+function checkTriangles(n, limits) {
+  if (limits && limits.maxTriangles && n > limits.maxTriangles) {
+    throw new TooLargeError(`model too large for this server: ${n.toLocaleString('en-US')} triangles (limit ${limits.maxTriangles.toLocaleString('en-US')})`);
+  }
+}
+
 /** True when the file is a 3MF: by name, or by the zip signature PK\x03\x04. */
 export const is3mf = (buffer, name) => {
   if (/\.3mf$/i.test(name || '')) return true;
@@ -74,15 +95,17 @@ const noop = () => {};
  */
 
 /** Count problems in an STL without repairing it. */
-export function analyzeStl(buffer) {
+export function analyzeStl(buffer, { limits } = {}) {
+  checkTriangles(binaryStlTriangles(buffer) || 0, limits);
   const mesh = weld(parseStl(buffer));
   const analysis = analyze(mesh);
   return { analysis, volume: orientedVolume(mesh), watertight: isWatertight(analysis) };
 }
 
 /** Parse, scan, repair and re-scan an STL. Returns the fixed mesh and the bytes of the repaired STL. */
-export function repairStl(buffer, { name = 'model.stl', onStage = noop, onScan = noop, onProgress = noop } = {}) {
+export function repairStl(buffer, { name = 'model.stl', limits, onStage = noop, onScan = noop, onProgress = noop } = {}) {
   onStage('read');
+  checkTriangles(binaryStlTriangles(buffer) || 0, limits);
   const mesh = weld(parseStl(buffer));
 
   onStage('scan');
@@ -106,10 +129,19 @@ export function repairStl(buffer, { name = 'model.stl', onStage = noop, onScan =
  * Read a 3MF and scan each normal part on its own. Cheap enough to run before asking which parts to repair.
  * `objects` is the list a picker shows; `problems` counts what is wrong in each part.
  */
-export function open3mf(buffer) {
-  const parsed = parse3mf(buffer);
+export function open3mf(buffer, { limits } = {}) {
+  let parsed;
+  try {
+    parsed = parse3mf(buffer, limits && limits.maxUncompressed ? { maxUncompressed: limits.maxUncompressed } : {});
+  } catch (err) {
+    if (limits && err instanceof ThreeMfError && /expands to more than/.test(err.message)) throw new TooLargeError(err.message);
+    throw err;
+  }
   const objs = parsed.objects.filter((o) => o.kind === 'normal');
   if (!objs.length) throw new ThreeMfError('this 3mf file has no printable mesh objects');
+  // Before welding: each part is welded and repaired, and placed once per copy for the
+  // assembled model, so that is the number of triangles held in memory at once.
+  checkTriangles(objs.reduce((s, o) => s + (o.faces.length / 3) * Math.max(1, o.placements.length), 0), limits);
 
   // Each object on its own, in its own coordinates (triangle order = file order).
   const meshes = new Map();

@@ -172,6 +172,25 @@ try {
   await s.api.close(500);
 }
 
+{ // Memory guards: a model over the triangle or unpacked-size limit is refused with 413
+  // before the expensive steps, and a file within the limits still repairs.
+  const s = await mk({ maxTriangles: 9 }); // the fixture has 10 triangles
+  const a = await post(s.port, '/api/v1/repair', stl, 'model/stl');
+  check2('api: STL over the triangle limit -> 413', a.status === 413 && /10 triangles \(limit 9\)/.test(a.json().error));
+  const b = await post(s.port, '/api/v1/repair', threeMf, 'model/3mf');
+  check2('api: 3MF over the triangle limit -> 413', b.status === 413 && /limit 9\)/.test(b.json().error));
+  const c = await post(s.port, '/api/v1/analyze', stl, 'model/stl');
+  check2('api: analyze is guarded too', c.status === 413);
+  await s.api.close(500);
+
+  const t = await mk({ maxUncompressed: 200 });
+  const d = await post(t.port, '/api/v1/repair', threeMf, 'model/3mf');
+  check2('api: 3MF that unpacks past the limit -> 413', d.status === 413 && /expands to more than/.test(d.json().error));
+  const e = await post(t.port, '/api/v1/repair', stl, 'model/stl');
+  check2('api: a file within the limits still repairs', e.status === 200 && /watertight=1/.test(e.headers['hullpatch-report']));
+  await t.api.close(500);
+}
+
 console.log = realLog;
 say(ok ? 'PASS (api)' : 'FAIL (api)');
 process.exit(ok ? 0 : 1);

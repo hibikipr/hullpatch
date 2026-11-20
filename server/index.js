@@ -29,6 +29,10 @@ export function configFromEnv(env = process.env, over = {}) {
     version: env.HULLPATCH_VERSION || 'dev',
     maxBytes: int(env.HULLPATCH_API_MAX_BYTES, 150 * MiB, 1),
     timeoutMs: int(env.HULLPATCH_API_TIMEOUT_MS, 240000, 1),
+    // Memory guards: a repair peaks at about 1.5-2 KB per triangle (the 1.9M-triangle Deku
+    // Mask 3MF needed 3 GB), and unpacking a 3MF costs memory before triangles can be counted.
+    maxTriangles: int(env.HULLPATCH_API_MAX_TRIANGLES, 2500000, 1),
+    maxUncompressed: int(env.HULLPATCH_API_MAX_UNCOMPRESSED_MB, 512, 1) * MiB,
     jobDelayMs: 0,
     ...over,
   };
@@ -84,7 +88,7 @@ export function createApi(config) {
     queue: config.queue,
     timeoutMs: config.timeoutMs,
     workerUrl: new URL('./job.js', import.meta.url),
-    workerData: { jobDelayMs: config.jobDelayMs },
+    workerData: { jobDelayMs: config.jobDelayMs, limits: { maxTriangles: config.maxTriangles, maxUncompressed: config.maxUncompressed } },
   });
 
   const authorized = (req) => {
@@ -158,7 +162,7 @@ export function createApi(config) {
       throw e;
     }
     if (!r.ok) {
-      if (r.user) throw new HttpError(422, r.message);
+      if (r.user) throw new HttpError(r.status || 422, r.message);
       throw new Error(r.message);
     }
 
@@ -253,7 +257,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const config = configFromEnv();
   const api = createApi(config);
   const port = await api.listen();
-  console.log(`hullpatch-api ${config.version} listening on ${config.host}:${port} (keys: ${config.keys.length ? 'configured' : 'none, API disabled'}, concurrency ${config.concurrency}, queue ${config.queue}, max ${config.maxBytes} bytes)`);
+  console.log(`hullpatch-api ${config.version} listening on ${config.host}:${port} (keys: ${config.keys.length ? 'configured' : 'none, API disabled'}, concurrency ${config.concurrency}, queue ${config.queue}, max ${config.maxBytes} bytes, ${config.maxTriangles} triangles, ${config.maxUncompressed / MiB} MB unpacked 3MF)`);
   let stopping = false;
   const stop = async (sig) => {
     if (stopping) return;
