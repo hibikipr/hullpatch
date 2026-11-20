@@ -606,6 +606,117 @@ function nonManifoldFaces(faces, V) {
   return bad;
 }
 
+/**
+ * Split "pinched" edges: an edge shared by an even number of faces (4, 6...) where
+ * two or more sheets merely touch, like two cubes sharing one edge. Around the edge,
+ * each face's solid lies behind it, so a face pairs with its angular neighbour on
+ * that side; when every face pairs up both ways and each pair runs the edge in
+ * opposite directions, the pairs are separate manifold sheets. Then the faces around
+ * each end vertex fall into fans (joined across two-face edges and across those
+ * pairs), and every fan but the first gets its own copy of the vertex, at the same
+ * position. Nothing moves and no face is removed, so the volume is unchanged.
+ * Rewrites faces in place; returns how many vertex copies were made.
+ * (A file format that joins vertices by position, like STL, will glue them again.)
+ */
+function splitPinchedEdges(verts, faces, V, addVertex) {
+  const { head, next } = buildEdges(faces, V);
+  const partner = new Map(); // half-edge -> the half-edge of the face it pairs with
+  const ends = new Set();
+  const hes = [];
+  for (const he0 of head.values()) {
+    hes.length = 0;
+    for (let he = he0; he !== -1; he = next[he]) hes.push(he);
+    const n = hes.length;
+    if (n < 4 || n % 2) continue;
+    const f0 = (he0 / 3) | 0, k0 = he0 % 3;
+    let x = faces[f0 * 3 + k0], y = faces[f0 * 3 + ((k0 + 1) % 3)];
+    if (x > y) { const t = x; x = y; y = t; }
+    const ox = verts[x * 3], oy = verts[x * 3 + 1], oz = verts[x * 3 + 2];
+    let ux = verts[y * 3] - ox, uy = verts[y * 3 + 1] - oy, uz = verts[y * 3 + 2] - oz;
+    const ul = Math.hypot(ux, uy, uz);
+    if (!ul) continue;
+    ux /= ul; uy /= ul; uz /= ul;
+    let rx = 0, ry = 0, rz = 0, sx = 0, sy = 0, sz = 0;
+    const items = [];
+    let ok = true;
+    for (const he of hes) {
+      const f = (he / 3) | 0, k = he % 3;
+      const a = faces[f * 3 + k], b = faces[f * 3 + ((k + 1) % 3)], c = faces[f * 3 + ((k + 2) % 3)];
+      // The third corner, projected onto the plane across the edge.
+      let wx = verts[c * 3] - ox, wy = verts[c * 3 + 1] - oy, wz = verts[c * 3 + 2] - oz;
+      const d = wx * ux + wy * uy + wz * uz;
+      wx -= d * ux; wy -= d * uy; wz -= d * uz;
+      const wl = Math.hypot(wx, wy, wz);
+      if (!wl) { ok = false; break; }
+      wx /= wl; wy /= wl; wz /= wl;
+      if (!items.length) {
+        rx = wx; ry = wy; rz = wz;
+        sx = uy * rz - uz * ry; sy = uz * rx - ux * rz; sz = ux * ry - uy * rx;
+      }
+      const angle = Math.atan2(wx * sx + wy * sy + wz * sz, wx * rx + wy * ry + wz * rz);
+      // Face normal against the direction of increasing angle at the face: the solid
+      // is behind the face, so on the side of decreasing angle when this is positive.
+      const ax = verts[a * 3], ay = verts[a * 3 + 1], az = verts[a * 3 + 2];
+      const e1x = verts[b * 3] - ax, e1y = verts[b * 3 + 1] - ay, e1z = verts[b * 3 + 2] - az;
+      const e2x = verts[c * 3] - ax, e2y = verts[c * 3 + 1] - ay, e2z = verts[c * 3 + 2] - az;
+      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      const tx = uy * wz - uz * wy, ty = uz * wx - ux * wz, tz = ux * wy - uy * wx;
+      const side = nx * tx + ny * ty + nz * tz;
+      if (!side) { ok = false; break; }
+      items.push({ he, angle, back: side > 0 ? -1 : 1, forward: a === x });
+    }
+    if (!ok) continue;
+    items.sort((p, q) => p.angle - q.angle);
+    const pairOf = (i) => (i + items[i].back + n) % n;
+    for (let i = 0; i < n && ok; i++) {
+      const j = pairOf(i);
+      if (pairOf(j) !== i || items[i].forward === items[j].forward) ok = false;
+    }
+    if (!ok) continue;
+    for (let i = 0; i < n; i++) partner.set(items[i].he, items[pairOf(i)].he);
+    ends.add(x); ends.add(y);
+  }
+  if (!ends.size) return 0;
+
+  // Faces around each end vertex, grouped into fans.
+  const around = new Map();
+  for (const v of ends) around.set(v, []);
+  for (let f = 0; f < faces.length / 3; f++) {
+    for (let k = 0; k < 3; k++) { const l = around.get(faces[f * 3 + k]); if (l) l.push(f); }
+  }
+  const changes = [];
+  for (const [v, list] of around) {
+    const idx = new Map(list.map((f, i) => [f, i]));
+    const par = list.map((_, i) => i);
+    const find = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+    const join = (f, g) => { const a = find(idx.get(f)), b = find(idx.get(g)); if (a !== b) par[a] = b; };
+    for (const f of list) {
+      for (let k = 0; k < 3; k++) {
+        const a = faces[f * 3 + k], b = faces[f * 3 + ((k + 1) % 3)];
+        if ((a !== v && b !== v) || a === b) continue;
+        const he = f * 3 + k, h0 = head.get(edgeKey(a, b, V));
+        const p = partner.get(he);
+        if (p !== undefined) { join(f, (p / 3) | 0); continue; }
+        // Any other edge: its faces stay together (two-face edges, and edges this can't resolve).
+        for (let h = h0; h !== -1; h = next[h]) if (idx.has((h / 3) | 0)) join(f, (h / 3) | 0);
+      }
+    }
+    const fans = new Map();
+    list.forEach((f, i) => { const r = find(i); if (!fans.has(r)) fans.set(r, []); fans.get(r).push(f); });
+    let firstFan = true;
+    for (const fan of fans.values()) {
+      if (firstFan) { firstFan = false; continue; }
+      changes.push(v, fan);
+    }
+  }
+  for (let i = 0; i < changes.length; i += 2) {
+    const v = changes[i];
+    const copy = addVertex(verts[v * 3], verts[v * 3 + 1], verts[v * 3 + 2]);
+    for (const f of changes[i + 1]) for (let k = 0; k < 3; k++) if (faces[f * 3 + k] === v) faces[f * 3 + k] = copy;
+  }
+  return changes.length / 2;
+}
+
 /** Ear-clip a loop projected onto its own plane; falls back to a fan around a new centre point. */
 function triangulateLoop(verts, loop, addVertex) {
   const m = loop.length;
@@ -809,6 +920,11 @@ export function repair(mesh, onProgress = () => {}) {
   onProgress(0.4);
   closeHoles(0.4, 0.8);
 
+  // Sheets that only touch along an edge (an even number of faces on it that pair
+  // up): give each sheet its own copy of the edge's vertices instead of cutting.
+  faces = faces.slice();
+  splitPinchedEdges(allVerts(), faces, V, addVertex);
+
   // Edges still shared by more than two faces (touching shells, stray internal faces):
   // remove the faces on them and close the resulting holes, a few rounds at most.
   // Kept only if the solid keeps its volume: a manifold mesh of the wrong shape is worse.
@@ -821,6 +937,8 @@ export function repair(mesh, onProgress = () => {}) {
   };
   let cleaned = false;
   for (let round = 0; round < 3; round++) {
+    // Caps from the previous round can meet along an edge too.
+    if (round) splitPinchedEdges(allVerts(), faces, V, addVertex);
     const bad = nonManifoldFaces(faces, V);
     if (!bad.size) break;
     cleaned = true;

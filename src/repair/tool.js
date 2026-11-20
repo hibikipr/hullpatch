@@ -147,12 +147,24 @@ export function initRepairTool(root) {
   }
   const pickKeys = () => [...pickList.querySelectorAll('input:checked')].map((i) => i.value);
   const syncPick = () => { pickGo.disabled = !pickKeys().length; };
-  function showPicker(objects) {
+  function showPicker(list) {
     clearTimeout(timer); // the user may take a while: no timeout while we wait
+    // Order by plate, then group; the sort is stable, so file order is kept within a group.
+    const plateOf = (o) => (o.plate == null ? Infinity : o.plate);
+    const groupFirst = new Map();
+    list.forEach((o, i) => { if (!groupFirst.has(o.group)) groupFirst.set(o.group, i); });
+    const objects = list.slice().sort((a, b) => (plateOf(a) - plateOf(b) || 0) || (groupFirst.get(a.group) - groupFirst.get(b.group)) || 0);
+    const perGroup = new Map();
+    for (const o of objects) perGroup.set(o.group, (perGroup.get(o.group) || 0) + 1);
+    const showPlate = new Set(objects.map((o) => o.plate)).size > 1;
+    const nameCount = new Map();
+    for (const o of objects) nameCount.set(o.name, (nameCount.get(o.name) || 0) + 1);
+    const bambu = objects.some((o) => o.plate != null); // plain 3MF files keep the plain names
+    const label = (o) => (bambu && o.group && o.group !== o.name && (perGroup.get(o.group) > 1 || nameCount.get(o.name) > 1) ? `${o.group} › ${o.name}` : o.name);
     pickList.innerHTML = objects.map((o, i) =>
       `<li><input type="checkbox" id="pick-${i}" value="${esc(o.key)}"${o.problems > 0 ? ' checked' : ''}>` +
-      `<label for="pick-${i}"><span class="pname">${esc(o.name)}</span>` +
-      `<span class="pmeta">${fmt(o.triangles)} triangles · ${o.problems > 0 ? `<span class="bad">${fmt(o.problems)} problem${o.problems === 1 ? '' : 's'}</span>` : '<span class="ok">no problems</span>'}</span></label></li>`).join('');
+      `<label for="pick-${i}"><span class="pname">${esc(label(o))}</span>` +
+      `<span class="pmeta">${showPlate && o.plate != null ? `plate ${o.plate} · ` : ''}${fmt(o.triangles)} triangles · ${o.problems > 0 ? `<span class="bad">${fmt(o.problems)} problem${o.problems === 1 ? '' : 's'}</span>` : '<span class="ok">no problems</span>'}</span></label></li>`).join('');
     syncPick();
     picker.hidden = false;
     pickList.querySelector('input')?.focus();
@@ -217,7 +229,8 @@ export function initRepairTool(root) {
     if (d.type === 'error') return fail(d.message);
 
     if (d.type === 'objects') {
-      line(`${d.objects.length} objects in this file · pick the ones to repair`);
+      const groups = d.objects.some((o) => o.plate != null) ? d.groups : 0;
+      line(groups && groups < d.objects.length ? `${d.objects.length} parts in ${groups} objects · pick the ones to repair` : `${d.objects.length} objects in this file · pick the ones to repair`);
       showPicker(d.objects);
     }
     if (d.type === 'stage' && d.stage === 'scan') line('scanning…');

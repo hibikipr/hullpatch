@@ -191,6 +191,30 @@ function parseBambuParts(xml) {
   return byObject;
 }
 
+// Bambu root-object display names (objectId -> name) and plate numbers (objectId -> plater_id).
+function parseBambuMeta(xml) {
+  const names = new Map();
+  const plates = new Map();
+  const meta = (s, key) => {
+    const m = new RegExp(`<metadata\\b[^>]*\\bkey\\s*=\\s*["']${key}["'][^>]*\\bvalue\\s*=\\s*["']([^"']*)["']`).exec(s);
+    return m ? decode(m[1]) : null;
+  };
+  for (const o of xml.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
+    const head = o[2].split(/<part\b/)[0];
+    const nm = meta(head, 'name');
+    if (nm) names.set(attrs(o[1]).id, nm);
+  }
+  for (const p of xml.matchAll(/<plate\b[^>]*>([\s\S]*?)<\/plate>/g)) {
+    const num = meta(p[1], 'plater_id');
+    if (num == null || !Number.isFinite(+num)) continue;
+    for (const mi of p[1].matchAll(/<model_instance\b[^>]*>([\s\S]*?)<\/model_instance>/g)) {
+      const oid = meta(mi[1], 'object_id');
+      if (oid != null && !plates.has(oid)) plates.set(oid, +num);
+    }
+  }
+  return { names, plates };
+}
+
 /**
  * Read a 3MF (zip) into mesh resources with every place each one is printed.
  * Throws ThreeMfError with a user-facing message when the file is unusable.
@@ -240,7 +264,10 @@ export function parse3mf(buffer, { maxUncompressed = MAX_UNCOMPRESSED } = {}) {
 
   const root = getModel(rootPath);
   const unit = UNITS.includes(root.unit) ? root.unit : 'millimeter';
-  const bambu = entries['Metadata/model_settings.config'] ? parseBambuParts(text('Metadata/model_settings.config')) : new Map();
+  const settings = entries['Metadata/model_settings.config'] ? text('Metadata/model_settings.config') : null;
+  const bambu = settings ? parseBambuParts(settings) : new Map();
+  const meta = settings ? parseBambuMeta(settings) : { names: new Map(), plates: new Map() };
+  let rootId = null; // the build object being walked
 
   const found = new Map(); // key -> resource
   const walk = (path, id, matrix, depth, stack, parts) => {
@@ -257,6 +284,8 @@ export function parse3mf(buffer, { maxUncompressed = MAX_UNCOMPRESSED } = {}) {
         if (!faces.length) return;
         r = {
           key, path, id, verts, faces, placements: [],
+          group: meta.names.get(rootId) || getModel(rootPath).objects.get(rootId)?.name || `Object ${rootId}`,
+          plate: meta.plates.has(rootId) ? meta.plates.get(rootId) : null,
           name: o.name || (part && part.name) || `Object ${id}`,
           kind: (part && BAMBU_KINDS[part.subtype]) || TYPE_KINDS[o.type] || 'normal',
         };
@@ -273,7 +302,10 @@ export function parse3mf(buffer, { maxUncompressed = MAX_UNCOMPRESSED } = {}) {
     }
     stack.delete(key);
   };
-  for (const item of root.items) walk(item.path || rootPath, item.id, item.transform, 0, new Set(), null);
+  for (const item of root.items) {
+    rootId = item.id;
+    walk(item.path || rootPath, item.id, item.transform, 0, new Set(), null);
+  }
 
   if (!found.size) throw new ThreeMfError('this 3mf file has no printable mesh objects');
   return { unit, entries, rootPath, objects: [...found.values()] };
