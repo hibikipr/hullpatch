@@ -1,0 +1,159 @@
+/* Hullpatch docs: the townsville.cc theme, with the same tokens, fonts and background as
+   the Hullpatch page (src/theme.css), plus styles for the Markdown kramdown produces. */
+
+@font-face { font-family: "Michroma"; font-weight: 400; font-display: swap; src: url("../fonts/michroma-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Chakra Petch"; font-weight: 400; font-display: swap; src: url("../fonts/chakra-petch-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Chakra Petch"; font-weight: 600; font-display: swap; src: url("../fonts/chakra-petch-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("../fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+
+:root {
+  --bg: #070a18;
+  --card: rgba(14, 20, 44, .72);
+  --line: rgba(255, 255, 255, .08);
+
+  --ink: #e6e9f5;
+  --lead: #c3c9dd;
+  --body: #aab2cc;
+  --muted: #8189a3;
+
+  --gold: #e8c36a;
+  --gold-light: #fbe7a8;
+
+  --link: #7fd6ff;
+  --link-hover: #e8c36a;
+
+  --saber-blue: #4cc9ff;
+  --saber-green: #5cff7a;
+  --saber-teal: #4ce6d2;
+  --saber-red: #ff4d5e;
+  --saber-purple: #b07cff;
+
+  --display: "Michroma", system-ui, sans-serif;
+  --text: "Chakra Petch", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+
+body {
+  font-family: var(--text);
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--body);
+  background: var(--bg);
+  background-image:
+    radial-gradient(1200px 700px at 85% -10%, rgba(76,201,255,.14), transparent 60%),
+    radial-gradient(900px 600px at -10% 40%, rgba(255,77,94,.08), transparent 60%),
+    radial-gradient(900px 700px at 50% 110%, rgba(92,255,122,.07), transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); }
+:focus-visible { outline: 3px solid var(--saber-blue); outline-offset: 3px; border-radius: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+.wrap { max-width: 1240px; width: 100%; margin: 0 auto; padding: 0 32px; }
+
+/* ---- Header (as on the Hullpatch page) ---- */
+.site-header .wrap { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding-top: 24px; padding-bottom: 24px; }
+.brand { display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--display); font-size: 14px; letter-spacing: .18em; }
+.brand:hover { color: var(--ink); }
+.brand .mark { width: 36px; height: 36px; border-radius: 9px; display: block; flex: none;
+  border: 1px solid rgba(76,201,255,.5); box-shadow: 0 0 18px rgba(76,201,255,.35); }
+.brand .tv { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .12em; }
+.site-nav { display: flex; gap: 26px; flex-wrap: wrap; }
+.site-nav a { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--body); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color: var(--saber-blue); }
+
+/* ---- Content ---- */
+.doc { flex: 1; padding-top: 40px; padding-bottom: 80px; max-width: 980px; }
+.kicker { font-family: var(--mono); font-size: 13px; letter-spacing: .22em; text-transform: uppercase; color: var(--saber-blue); }
+
+.doc h1, .doc h2, .doc h3, .doc h4 { font-family: var(--display); font-weight: 400; color: var(--ink); overflow-wrap: anywhere; text-wrap: balance; }
+.doc h1 { font-size: clamp(28px, 5vw, 46px); letter-spacing: .05em; line-height: 1.15; margin: 18px 0 18px;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.doc h1::after { content: ""; display: block; height: 2px; max-width: 520px; margin-top: 18px; background: linear-gradient(90deg, var(--gold), transparent); }
+.doc h2 { font-size: 22px; letter-spacing: .06em; margin: 56px 0 18px; display: flex; align-items: center; gap: 18px; }
+.doc h2::after { content: ""; flex: 1; min-width: 40px; height: 1px; background: linear-gradient(90deg, rgba(232,195,106,.5), transparent); }
+.doc h3 { font-size: 16px; letter-spacing: .05em; margin: 34px 0 12px; color: var(--saber-blue); }
+.doc h4 { font-size: 14px; letter-spacing: .05em; margin: 24px 0 10px; color: var(--lead); }
+
+.doc p, .doc ul, .doc ol, .doc dl, .doc table, .doc pre, .doc blockquote, .doc .highlighter-rouge { margin-bottom: 16px; }
+.doc p { color: var(--body); }
+.doc strong { color: var(--ink); font-weight: 600; }
+.doc ul, .doc ol { padding-left: 1.4em; }
+.doc li { margin: 4px 0; }
+.doc li::marker { color: var(--saber-blue); }
+.doc hr { border: 0; height: 1px; background: var(--line); margin: 40px 0; }
+
+.doc blockquote { border-left: 2px solid var(--gold); background: rgba(232,195,106,.06); padding: 12px 18px; border-radius: 0 10px 10px 0; color: var(--lead); }
+.doc blockquote p:last-child { margin-bottom: 0; }
+
+/* Inline code and code blocks */
+.doc code { font-family: var(--mono); font-size: .86em; color: var(--saber-teal); background: rgba(76,230,210,.07);
+  border: 1px solid rgba(76,230,210,.14); border-radius: 6px; padding: .1em .38em; overflow-wrap: anywhere; }
+.doc a code { color: inherit; }
+.doc pre { font-family: var(--mono); font-size: 13.5px; line-height: 1.6; color: var(--ink); background: var(--card);
+  border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; }
+.doc pre code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; overflow-wrap: normal; }
+.doc .highlighter-rouge pre { margin: 0; }
+
+/* Rouge syntax colours in the saber palette */
+.highlight .c, .highlight .c1, .highlight .cm, .highlight .cs, .highlight .ch { color: var(--muted); font-style: italic; }
+.highlight .k, .highlight .kd, .highlight .kn, .highlight .kr, .highlight .kc, .highlight .nt { color: var(--saber-purple); }
+.highlight .s, .highlight .s1, .highlight .s2, .highlight .sb, .highlight .sh, .highlight .si, .highlight .sx { color: var(--saber-green); }
+.highlight .m, .highlight .mi, .highlight .mf, .highlight .il, .highlight .kt { color: var(--gold); }
+.highlight .nf, .highlight .fm, .highlight .nb, .highlight .bp { color: var(--saber-blue); }
+.highlight .na, .highlight .nv, .highlight .vg, .highlight .vi { color: var(--saber-teal); }
+.highlight .o, .highlight .ow, .highlight .p { color: var(--lead); }
+.highlight .err { color: var(--saber-red); }
+
+/* Tables: cards like the page's readout */
+.doc table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 15px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.doc th { font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--gold); text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.doc td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--body); }
+.doc tr:last-child td { border-bottom: 0; }
+.doc td:first-child { color: var(--ink); }
+
+/* Table of contents (kramdown {:toc}) */
+.doc #markdown-toc { list-style: none; padding: 16px 20px; margin: 24px 0 8px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 14px; columns: 2 240px; column-gap: 32px; }
+.doc #markdown-toc::before { content: "On this page"; display: block; column-span: all; margin-bottom: 8px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--gold); }
+.doc #markdown-toc li { break-inside: avoid; margin: 2px 0; }
+.doc #markdown-toc li::marker { content: none; }
+.doc #markdown-toc ul { list-style: none; padding-left: 14px; }
+.doc #markdown-toc a { color: var(--lead); font-size: 15px; }
+.doc #markdown-toc ul a { color: var(--muted); font-size: 14px; }
+.doc #markdown-toc a:hover { color: var(--saber-blue); }
+
+/* ---- Footer (as on the Hullpatch page) ---- */
+.site-footer { border-top: 1px solid var(--line); }
+.site-footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-top: 28px; padding-bottom: 28px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .06em; }
+.site-footer .dotcc { color: var(--gold); }
+.site-footer a { color: var(--body); }
+.site-footer a:hover { color: var(--gold); }
+
+@media (max-width: 640px) {
+  body { font-size: 16px; }
+  .wrap { padding-left: 16px; padding-right: 16px; }
+  .site-nav { gap: 18px; }
+  .brand .tv { display: none; }
+  .doc { padding-top: 24px; }
+  .doc h2 { font-size: 18px; margin-top: 44px; }
+  .doc pre { font-size: 12.5px; padding: 14px; }
+  /* Wide tables scroll sideways on phones instead of widening the page. */
+  .doc table { display: block; overflow-x: auto; }
+}
