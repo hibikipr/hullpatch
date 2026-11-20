@@ -31,7 +31,10 @@ export function configFromEnv(env = process.env, over = {}) {
     timeoutMs: int(env.HULLPATCH_API_TIMEOUT_MS, 240000, 1),
     // Memory guards: a repair peaks at about 1.5-2 KB per triangle (the 1.9M-triangle Deku
     // Mask 3MF needed 3 GB), and unpacking a 3MF costs memory before triangles can be counted.
+    // Triangles to repair; triangles only scanned and copied may be 4x as many (they cost
+    // about a quarter of the memory), unless HULLPATCH_API_MAX_SCAN_TRIANGLES says otherwise.
     maxTriangles: int(env.HULLPATCH_API_MAX_TRIANGLES, 2500000, 1),
+    maxScanTriangles: int(env.HULLPATCH_API_MAX_SCAN_TRIANGLES, 0, 1),
     maxUncompressed: int(env.HULLPATCH_API_MAX_UNCOMPRESSED_MB, 512, 1) * MiB,
     jobDelayMs: 0,
     ...over,
@@ -88,7 +91,7 @@ export function createApi(config) {
     queue: config.queue,
     timeoutMs: config.timeoutMs,
     workerUrl: new URL('./job.js', import.meta.url),
-    workerData: { jobDelayMs: config.jobDelayMs, limits: { maxTriangles: config.maxTriangles, maxUncompressed: config.maxUncompressed } },
+    workerData: { jobDelayMs: config.jobDelayMs, limits: { maxTriangles: config.maxTriangles, maxScanTriangles: config.maxScanTriangles, maxUncompressed: config.maxUncompressed } },
   });
 
   const authorized = (req) => {

@@ -430,5 +430,71 @@ const PINCH_TRIS = [...CUBE_TRIS(), ...CUBE.map(([a, b, c]) => [a + 8, b + 8, c 
   check('bambu plates: a plain 3MF has no plate', plain.objects[0].plate === null);
 }
 
+// 16-19. Edges with four faces the repair used to leave worse (from real parts: a body
+//     whose cleanup left zero-area caps that were then dropped, opening 6 edges; a hat
+//     whose single four-face edge became two). Built in code from cubes.
+const soupOf = (tris) => { const s = new Float64Array(tris.length * 9); tris.forEach((t, i) => t.forEach((p, k) => s.set(p, i * 9 + k * 3))); return s; };
+const badCount = (a) => a.NakedEdges + a.NonManifoldEdges + a.OrientationConflicts;
+/** Cube A turned by deg about its own edge x = y = s (along z), as cube B: the two share that edge. */
+const turnedPair = (deg, s = 1) => {
+  const A = corners(0, 0, 0, s), t = deg * Math.PI / 180, c = Math.cos(t), sn = Math.sin(t);
+  const B = A.map(([x, y, z]) => [s + c * (x - s) - sn * (y - s), s + sn * (x - s) + c * (y - s), z]);
+  B[2] = A[2]; B[6] = A[6];
+  return [...CUBE.map((tr) => tr.map((i) => A[i])), ...CUBE.map((tr) => tr.map((i) => B[i]))];
+};
+
+// 16. Tied faces: two cubes side by side whose shared side is split along opposite
+//     diagonals. At each edge of that side two faces lie in one plane (same angle), so
+//     the pairing must try both orders of them. Before: one edge stayed with four faces.
+{
+  const A = corners(0, 0, 0, 1), B = corners(1, 0, 0, 1);
+  const mesh = weld(soupOf([...CUBE.map((t) => t.map((i) => A[i])), ...CUBE.map((t) => t.map((i) => B[i]))]));
+  const r = repair(mesh), a = analyze(r);
+  check('tied faces: mismatched wall comes apart into two clean cubes, no face lost', clean(a) && a.FaceCount === 24 && Math.abs(meshVolume(r) - 2) < 1e-9);
+}
+
+// 17. Crossing faces: cube B is cube A turned 70 degrees about A's edge, so they overlap
+//     there and no pairing around the edge agrees with the geometry (the hat's sliver
+//     edge). Pair neighbours that run the edge opposite ways, as a slicer does.
+{
+  const mesh = weld(soupOf(turnedPair(70)));
+  const r = repair(mesh), a = analyze(r);
+  check('crossing faces: overlapping cubes on one edge are split cleanly, nothing moved', analyze(mesh).NonManifoldEdges === 1 && clean(a) && a.FaceCount === 24 && Math.abs(meshVolume(r) - 2) < 1e-9);
+  check('crossing faces: stable on its own output', clean(analyze(repair(r))));
+}
+
+// 18. Do no harm: the same crossing edge on a small part beside a big one. The volume
+//     check could not see the cleanup turn one bad edge into three (before: 1 -> 3).
+{
+  const big = corners(-20, -20, -20, 10);
+  const mesh = weld(soupOf([...CUBE.map((t) => t.map((i) => big[i])), ...turnedPair(70)]));
+  const a0 = analyze(mesh), r = repair(mesh), a1 = analyze(r);
+  check('do no harm: never more bad edges or flipped faces than came in', badCount(a1) <= badCount(a0) && a1.InvertedNormals <= a0.InvertedNormals);
+  check('do no harm: crossing edge beside a big part comes out clean, same volume', clean(a1) && Math.abs(meshVolume(r) - 1002) < 1e-6);
+  const prov = [...r.origin].every((o, f) => o >= 0 && [0, 1, 2].every((k) => r.faces[f * 3 + k] === mesh.faces[o * 3 + r.corner[f * 3 + k]] || r.verts.subarray(r.faces[f * 3 + k] * 3, r.faces[f * 3 + k] * 3 + 3).every((x, d) => x === mesh.verts[mesh.faces[o * 3 + r.corner[f * 3 + k]] * 3 + d])));
+  check('do no harm: provenance still maps every corner', prov);
+}
+
+// 19. STL order: STL joins the split copies again by position, and admesh-based slicers
+//     (Bambu Studio, PrusaSlicer) then pair the faces on such an edge in file order. With
+//     the two cubes' faces interleaved, Bambu reported the pinch as non-manifold. The
+//     output must list each sheet's two faces on the edge first and second, third and fourth.
+{
+  const A = corners(0, 0, 0, 1), B = corners(1, 1, 0, 1), tris = [];
+  for (let i = 0; i < 12; i++) tris.push(CUBE[i].map((j) => A[j]), CUBE[i].map((j) => B[j]));
+  const mesh = weld(soupOf(tris)), r = repair(mesh);
+  const pos = (v) => Array.from(r.verts.subarray(v * 3, v * 3 + 3)).join(',');
+  const byPlace = new Map();
+  for (let f = 0; f < r.faces.length / 3; f++) for (let k = 0; k < 3; k++) {
+    const a = r.faces[f * 3 + k], b = r.faces[f * 3 + (k + 1) % 3], pa = pos(a), pb = pos(b);
+    const key = pa < pb ? pa + '|' + pb : pb + '|' + pa;
+    if (!byPlace.has(key)) byPlace.set(key, []);
+    byPlace.get(key).push(Math.min(a, b) + '-' + Math.max(a, b));
+  }
+  const shared = [...byPlace.values()].filter((l) => l.length === 4);
+  check('stl order: pinched cubes listed sheet by sheet on the shared edge', clean(analyze(r)) && shared.length === 1 && shared[0][0] === shared[0][1] && shared[0][2] === shared[0][3]);
+  check('stl order: provenance follows the reordered faces', [...r.origin].every((o, f) => [0, 1, 2].every((k) => pos(r.faces[f * 3 + k]) === Array.from(mesh.verts.subarray(mesh.faces[o * 3 + r.corner[f * 3 + k]] * 3, mesh.faces[o * 3 + r.corner[f * 3 + k]] * 3 + 3)).join(','))));
+}
+
 console.log(ok ? 'PASS' : 'FAIL');
 process.exit(ok ? 0 : 1);

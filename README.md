@@ -63,7 +63,8 @@ With no keys configured the API answers 503 "API disabled", so it fails closed.
 A repair needs about 1.5 to 2 KB of memory per triangle at its peak, per concurrent job
 (the 1.9-million-triangle Deku Mask 3MF peaked at 3 GB). A 3MF can unpack to far more than
 its upload size, so the upload limit alone doesn't bound memory: the API refuses a model
-over `HULLPATCH_API_MAX_TRIANGLES` or a 3MF that unpacks past
+with more triangles to repair than `HULLPATCH_API_MAX_TRIANGLES` (or more in all than
+`HULLPATCH_API_MAX_SCAN_TRIANGLES`), or a 3MF that unpacks past
 `HULLPATCH_API_MAX_UNCOMPRESSED_MB` with a 413, before repairing it. Set those to fit the
 memory the container has. Without them, a model too big for the host gets the container
 killed and the caller only sees a dropped connection.
@@ -153,7 +154,8 @@ curl -fsS -D - -o /dev/null -X POST https://stlrepair.townsville.cc/api/v1/repai
 | `HULLPATCH_API_QUEUE` | 4 | Requests allowed to wait behind them. |
 | `HULLPATCH_API_MAX_BYTES` | 150 MB | Upload limit. |
 | `HULLPATCH_API_TIMEOUT_MS` | 240000 | A repair that runs longer returns 503. |
-| `HULLPATCH_API_MAX_TRIANGLES` | 2500000 | Larger models get 413 before repair (about 4 GB peak at the default). Triangles count once per placed copy in a 3MF. |
+| `HULLPATCH_API_MAX_TRIANGLES` | 2500000 | Triangles to repair (an STL, or the 3MF parts being repaired). More gets 413 before repair; about 4 GB peak at the default. |
+| `HULLPATCH_API_MAX_SCAN_TRIANGLES` | 4 × the above | Triangles in a whole 3MF, counted once per placed copy. Parts left as they are cost about a quarter of the memory, so a big project where only a few parts need repair still goes through. |
 | `HULLPATCH_API_MAX_UNCOMPRESSED_MB` | 512 | A 3MF that unpacks to more gets 413 before it is unpacked. |
 | `PORT` | 8081 | Listen port. |
 
