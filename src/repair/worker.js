@@ -45,6 +45,22 @@ function assemble(objs, meshes) {
 
 const problemCount = (a) => a.NakedEdges + a.NonManifoldEdges + a.InvertedNormals + a.OrientationConflicts + a.DuplicateFaces + a.DegenerateFaces;
 
+// Readout counts for a 3MF: each object's own analysis, once per place it is printed.
+// Not the assembled mesh: welding everything by position would rejoin edges the repair
+// split on purpose (a 3MF keeps them apart by index) and merge parts that only touch.
+function sumAnalyses(objs, analyses) {
+  const total = {};
+  let shells = 0;
+  for (const o of objs) {
+    const a = analyses.get(o.key);
+    const n = o.placements.length;
+    for (const k in a) if (typeof a[k] === 'number' && k !== 'DisjointShells') total[k] = (total[k] || 0) + a[k] * n;
+    shells += (a.DisjointShells || 1) * n;
+  }
+  total.DisjointShells = shells > 1 ? shells : 0;
+  return total;
+}
+
 // The next message of type `type`; anything else sent meanwhile is ignored.
 function waitFor(type) {
   return new Promise((resolve) => {
@@ -58,8 +74,8 @@ function waitFor(type) {
 }
 
 // Scan a mesh for the 3D "before" view: counts, picture, hole outlines and a problem flag per face.
-function scanMessage(mesh, send, extra) {
-  const before = analyze(mesh);
+function scanMessage(mesh, send, extra, counts) {
+  const before = counts || analyze(mesh);
   const beforeTris = toTriangles(mesh, PREVIEW_TRIS);
   const holes = nakedSegments(mesh);
   // The welded mesh plus a problem flag per face, for the coloured 3D "before" view.
@@ -94,7 +110,8 @@ async function run3mf(buffer, send) {
   if (objs.length > 1) {
     send({
       type: 'objects',
-      objects: objs.map((o) => ({ key: o.key, name: o.name, triangles: o.faces.length / 3, problems: problemCount(scans.get(o.key)) })),
+      groups: new Set(objs.map((o) => o.group)).size,
+      objects: objs.map((o) => ({ key: o.key, name: o.name, group: o.group, plate: o.plate, triangles: o.faces.length / 3, problems: problemCount(scans.get(o.key)) })),
     });
     const msg = await waitFor('choose');
     const known = new Set(objs.map((o) => o.key));
@@ -103,7 +120,7 @@ async function run3mf(buffer, send) {
 
   send({ type: 'stage', stage: 'scan' });
   const beforeMesh = assemble(objs, meshes);
-  const before = scanMessage(beforeMesh, send, { format: '3mf', unit: parsed.unit, objectCount: objs.length, chosen: chosen.length });
+  const before = scanMessage(beforeMesh, send, { format: '3mf', unit: parsed.unit, objectCount: objs.length, chosen: chosen.length }, sumAnalyses(objs, scans));
   const volumeBefore = orientedVolume(beforeMesh);
   const beforeStl = writeStl(beforeMesh, 'hullpatch before');
 
@@ -128,7 +145,9 @@ async function run3mf(buffer, send) {
 
   send({ type: 'stage', stage: 'verify' });
   const afterMesh = assemble(objs, fixedMeshes);
-  const after = analyze(afterMesh);
+  const afterScans = new Map(scans);
+  for (const [key, res] of results) afterScans.set(key, analyze(res));
+  const after = sumAnalyses(objs, afterScans);
   const volumeAfter = Math.abs(meshVolume(afterMesh));
   const { bytes, paintLost } = write3mf(parsed, results);
   const stl = bytes.buffer.byteLength === bytes.byteLength ? bytes.buffer : bytes.slice().buffer;

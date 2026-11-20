@@ -370,5 +370,65 @@ async function runWorker(buffer, name, choose) {
   check('provenance: each input face is used once; the degenerate one and a duplicate are dropped', new Set(used).size === used.length && !used.includes(11) && !(used.includes(2) && used.includes(10)));
 }
 
+// 13. Pinched edge: two cubes touching along one edge (4 faces on it). The repair splits
+//     the edge into two copies instead of deleting faces, so nothing moves or goes missing.
+const PINCH_P = [...UNIT_CUBE, ...corners(1, 1, 0, 1)];
+const PINCH_TRIS = [...CUBE_TRIS(), ...CUBE.map(([a, b, c]) => [a + 8, b + 8, c + 8])];
+{
+  const soup = new Float64Array(PINCH_TRIS.length * 9);
+  PINCH_TRIS.forEach((t, i) => t.forEach((v, k) => soup.set(PINCH_P[v], i * 9 + k * 3)));
+  const mesh = weld(soup);
+  const a0 = analyze(mesh);
+  check('pinched edge: fixture has one edge shared by four faces', a0.NonManifoldEdges === 1 && a0.NakedEdges === 0);
+  const r = repair(mesh);
+  const a1 = analyze(r);
+  check('pinched edge: repaired by splitting, every face kept', clean(a1) && a1.FaceCount === 24 && [...r.origin].every((o, i) => o === i));
+  check('pinched edge: volume unchanged (two unit cubes)', Math.abs(meshVolume(r) - 2) < 1e-9);
+  const a2 = analyze(repair(r));
+  check('pinched edge: repairing the output again is stable', clean(a2) && a2.FaceCount === 24);
+}
+
+// 14. The same pinch inside a 3MF: the page's after-repair counts come from each object as
+//     written (by index), not from a copy welded by position that would rejoin the split edge.
+{
+  const buf = zip3mf({ '[Content_Types].xml': CT, '_rels/.rels': RELS, '3D/3dmodel.model': modelXml({ objects: objectXml(1, meshXml(PINCH_P, PINCH_TRIS)), items: itemXml(1) }) });
+  const msgs = await runWorker(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), 'pinch.3mf');
+  const d = msgs.find((m) => m.type === 'done');
+  check('pinched 3mf: before shows the pinch, after is clean', d && d.before.NonManifoldEdges === 1 && clean(d.after));
+  const back = parse3mf(new Uint8Array(d.stl));
+  check('pinched 3mf: written object has no edge with more than two faces', back.objects[0].faces.length === 72 && (() => {
+    const n = new Map(); const f = back.objects[0].faces;
+    for (let i = 0; i < f.length; i += 3) for (let k = 0; k < 3; k++) { const a = f[i + k], b = f[i + (k + 1) % 3], key = a < b ? a + ',' + b : b + ',' + a; n.set(key, (n.get(key) || 0) + 1); }
+    return [...n.values()].every((c) => c === 2);
+  })());
+}
+
+// 15. Bambu objects made of parts, on two plates: each part knows its object (group) and
+//     plate, so the picker can tell two parts with the same name apart.
+{
+  const sub = modelXml({
+    objects: [1, 2, 4, 5].map((id, i) => objectXml(id, meshXml(corners(i * 2, 0, 0, 1), CUBE_TRIS()))).join('\n'),
+    items: '',
+  });
+  const comp = (id) => `    <component p:path="/3D/Objects/object_1.model" objectid="${id}"/>`;
+  const root = modelXml({
+    ns: ` xmlns:p="${PROD_NS}"`,
+    objects: `  <object id="3" type="model">\n   <components>\n${comp(1)}\n${comp(2)}\n   </components>\n  </object>\n  <object id="6" type="model">\n   <components>\n${comp(4)}\n${comp(5)}\n   </components>\n  </object>`,
+    items: itemXml(3) + '\n' + itemXml(6),
+  });
+  const part = (id, name) => `  <part id="${id}" subtype="normal_part"><metadata key="name" value="${name}"/></part>`;
+  const plate = (n, obj) => ` <plate><metadata key="plater_id" value="${n}"/><model_instance><metadata key="object_id" value="${obj}"/></model_instance></plate>`;
+  const cfg = `<config>\n <object id="3"><metadata key="name" value="Mask_A"/>\n${part(1, 'Body')}\n${part(2, 'Pin')}\n </object>\n <object id="6"><metadata key="name" value="Mask_B"/>\n${part(4, 'Body')}\n${part(5, 'Pin')}\n </object>\n${plate(1, 3)}\n${plate(2, 6)}\n</config>\n`;
+  const buf = zip3mf({ '[Content_Types].xml': CT, '_rels/.rels': RELS, '3D/3dmodel.model': root, '3D/Objects/object_1.model': sub, 'Metadata/model_settings.config': cfg });
+  const p = parse3mf(buf);
+  const seen = p.objects.map((o) => `${o.group}/${o.name}/${o.plate}`).join(' ');
+  check('bambu plates: each part has its object name and plate', seen === 'Mask_A/Body/1 Mask_A/Pin/1 Mask_B/Body/2 Mask_B/Pin/2');
+  const msgs = await runWorker(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), 'plates.3mf', () => []);
+  const o = msgs.find((m) => m.type === 'objects');
+  check('bambu plates: the object list carries group, plate and the object count', o && o.groups === 2 && o.objects.length === 4 && o.objects[3].group === 'Mask_B' && o.objects[3].plate === 2);
+  const plain = parse3mf(zip3mf({ '[Content_Types].xml': CT, '_rels/.rels': RELS, '3D/3dmodel.model': modelXml({ objects: objectXml(1, meshXml(UNIT_CUBE, CUBE_TRIS())), items: itemXml(1) }) }));
+  check('bambu plates: a plain 3MF has no plate', plain.objects[0].plate === null);
+}
+
 console.log(ok ? 'PASS' : 'FAIL');
 process.exit(ok ? 0 : 1);

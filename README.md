@@ -92,16 +92,21 @@ npm run test:repair # repair engine tests
    cavities inward.
 4. Fills holes. Zero-area sliver holes (T-junctions) are closed by splitting the
    neighbouring face instead of adding a flat triangle.
-5. Removes any faces still on non-manifold edges and refills the gaps, but only keeps
+5. Splits pinched edges: where two surfaces touch along one edge (four faces on it,
+   pairing up into two sheets), the edge gets a second copy for one sheet. Nothing moves
+   and no face is removed. A 3MF keeps the split; an STL can't, since readers join
+   corners by position.
+6. Removes any faces still on non-manifold edges and refills the gaps, but only keeps
    that change if the model's volume stays the same.
-6. Removes specks: shells under 1/1000 of the model's size or with no volume.
-7. Handles winding conflicts: edges where the surface twists so that no way of turning
+7. Removes specks: shells under 1/1000 of the model's size or with no volume.
+8. Handles winding conflicts: edges where the surface twists so that no way of turning
    the faces makes both sides agree (typical when parts were exported inside-out and
    joined). The few faces at those spots are cut out and the holes capped, so the model
    becomes a consistent, outward-facing solid.
 
 The repaired file is checked again before download, and the page only says
-"watertight" when it has no open edges, non-manifold edges or flipped faces.
+"watertight" when it has no open edges, non-manifold edges, flipped faces or winding
+conflicts. For a 3MF each object is checked as it is written.
 
 ## Releasing
 
