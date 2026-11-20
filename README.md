@@ -23,6 +23,12 @@ Hullpatch can be installed as an app (Install app button in Chrome and Edge, Add
 Home Screen / Dock in Safari). Installed, it works offline, opens `.stl` and `.3mf` files
 from the desktop (Chrome and Edge) and takes `.stl` and `.3mf` files shared to it on Android.
 
+For scripts and other programs there is also an optional, self-hosted HTTP API: send an
+STL or 3MF, get the repaired file back. It is a separate service and image; the page
+never uses it. See [HTTP API (optional)](#http-api-optional) below and the full
+[API reference](https://hibikipr.github.io/hullpatch/api.html)
+([OpenAPI spec](https://hibikipr.github.io/hullpatch/openapi.yaml)).
+
 ## Run with Docker
 
 ```bash
@@ -136,13 +142,18 @@ curl -fsS -D - -o /dev/null -X POST https://stlrepair.townsville.cc/api/v1/repai
 
 | Status | Meaning |
 |---|---|
-| 400 | Empty body, empty file part, bad `format` or `parts` value. |
-| 401 | Missing or wrong key. |
-| 405 | Wrong method. |
-| 413 | Larger than the upload limit, or a model over the triangle or unpacked-size limit. |
-| 422 | File can't be read (`{"error": …}`), or the output can't be made, such as `?format=3mf` on an STL. |
+| 400 | Empty body, empty file part, missing multipart boundary or `file` field, bad `format` or `parts` value. |
+| 401 | Missing or wrong key (checked before the method, so a `GET /repair` without a key is 401). |
+| 404 | Unknown path. |
+| 405 | Wrong method; `Allow` says which. |
+| 413 | Larger than the upload limit, or a model over the triangle or unpacked-size limits (the triangle limits apply to binary STL and 3MF; an ASCII STL is bounded by the upload limit). |
+| 422 | File can't be read (`{"error": …}`), or `?format=3mf` on an STL sent to `/repair`. |
 | 429 | Queue full. Wait for `Retry-After` and try again. |
+| 500 | Unexpected server error (details only in the server log). |
 | 503 | API disabled, or the repair took too long. |
+
+Every error body is JSON: `{"error": "…"}`. The file's bytes decide its format: a zip is
+treated as a 3MF even if it was sent as `model/stl`.
 
 ### Configuration
 
@@ -219,16 +230,22 @@ npm run test:repair # repair engine tests
 4. Fills holes. Zero-area sliver holes (T-junctions) are closed by splitting the
    neighbouring face instead of adding a flat triangle.
 5. Splits pinched edges: where two surfaces touch along one edge (four faces on it,
-   pairing up into two sheets), the edge gets a second copy for one sheet. Nothing moves
-   and no face is removed. A 3MF keeps the split; an STL can't, since readers join
-   corners by position.
+   pairing up into two sheets), the edge gets a second copy for one sheet. Faces that
+   lie flat against each other or cross at the edge are paired by which side is solid,
+   and edges sharing a corner are split together. Nothing moves and no face is removed;
+   a split is kept only if the volume holds. A 3MF keeps the split; an STL can't, since
+   readers join corners by position, so the faces are written in the order those
+   readers pair them.
 6. Removes any faces still on non-manifold edges and refills the gaps, but only keeps
-   that change if the model's volume stays the same.
+   that change if the model's volume stays the same and fewer bad edges are left.
 7. Removes specks: shells under 1/1000 of the model's size or with no volume.
 8. Handles winding conflicts: edges where the surface twists so that no way of turning
    the faces makes both sides agree (typical when parts were exported inside-out and
    joined). The few faces at those spots are cut out and the holes capped, so the model
    becomes a consistent, outward-facing solid.
+9. Does no harm: if the result has more open, non-manifold, conflicting or flipped
+   edges than the input, the repair falls back to an earlier, safer stage, so a part
+   never comes back worse than it went in.
 
 The repaired file is checked again before download, and the page only says
 "watertight" when it has no open edges, non-manifold edges, flipped faces or winding
@@ -237,7 +254,8 @@ conflicts. For a 3MF each object is checked as it is written.
 ## Releasing
 
 Push a version tag (or publish a GitHub release with one) and the
-`Build and publish image` workflow pushes `ghcr.io/hibikipr/hullpatch:<version>`:
+`Build and publish images` workflow pushes both images, `ghcr.io/hibikipr/hullpatch:<version>`
+and `ghcr.io/hibikipr/hullpatch-api:<version>` (every push to `main` updates `:latest`):
 
 ```bash
 git tag v1.0.0 && git push origin v1.0.0
@@ -245,7 +263,12 @@ git tag v1.0.0 && git push origin v1.0.0
 
 CI also lints the Dockerfile, runs the built container read-only and checks that it
 serves the page, the CSP header and the viewer's WASM (as gzipped `application/wasm`),
-then scans the image with Trivy.
+then scans the image with Trivy. The API image gets the same lint and Trivy scan, plus a
+smoke test: no key gives 401, no keys configured gives 503, and a broken cube comes back
+watertight.
+
+The API reference in `docs/` is published with GitHub Pages at
+<https://hibikipr.github.io/hullpatch/>; `docs/openapi.yaml` describes the API for tools.
 
 The Content-Security-Policy allows `'unsafe-eval'` for scripts because F3D's
 Emscripten bindings create functions with `new Function`. Without it the 3D view

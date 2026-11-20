@@ -1,0 +1,5 @@
+title: Hullpatch
+description: STL and 3MF repair in the browser, with an optional HTTP API.
+theme: jekyll-theme-cayman
+url: https://hibikipr.github.io
+baseurl: /hullpatch
