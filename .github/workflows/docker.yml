@@ -239,7 +239,8 @@ jobs:
         run: docker rm -f api-smoke api-smoke-nokeys
 
   trivy:
-    name: Scan ${{ matrix.name }} image for vulnerabilities
+    # The site scan keeps the name main's branch protection requires.
+    name: ${{ matrix.name == 'site' && 'Scan image for vulnerabilities' || 'Scan API image for vulnerabilities' }}
     runs-on: ubuntu-latest
     needs: [build-and-smoke-test, api-build-and-smoke-test]
     strategy:
