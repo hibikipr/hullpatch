@@ -22,7 +22,11 @@ FROM node:25-alpine
 # re-run instead of being served from the build cache forever; CI passes the build
 # date so each day's first build picks up new patches.
 ARG CACHE_BUST=dev
-RUN echo "apk cache bust: ${CACHE_BUST}" && apk upgrade --no-cache
+# The server runs `node` directly and never needs npm, npx, corepack or yarn, so they
+# are removed: their own bundled dependencies are where scanners find most CVEs.
+RUN echo "apk cache bust: ${CACHE_BUST}" && apk upgrade --no-cache \
+    && rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+              /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 
 # Set from the release git tag (see .github/workflows/docker-publish.yml);
 # "dev" for a plain local `docker build`.
