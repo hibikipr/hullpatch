@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+
+# Hullpatch API: the repair engine behind a small Node HTTP server (server/).
+# The static site's image is Dockerfile; this one is published separately as
+# ghcr.io/hibikipr/hullpatch-api so the site keeps its "nothing is uploaded" promise.
+
+# ---- Deps: the server needs only fflate at runtime. The other dependencies in
+# package.json (fonts, f3d) are for the static site build, so install from the lockfile
+# (integrity-checked, no scripts) and then drop everything except fflate. fflate is pure
+# JavaScript, so building once on the runner's own architecture is fine for every platform.
+FROM --platform=$BUILDPLATFORM node:25-alpine AS deps
+WORKDIR /deps
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+    && find node_modules -mindepth 1 -maxdepth 1 ! -name fflate -exec rm -rf {} + \
+    && test -f node_modules/fflate/package.json
+
+# ---- Run: same Node major as the build stage of Dockerfile.
+FROM node:25-alpine
+
+# The base image's packages can lag security fixes. CACHE_BUST makes this layer
+# re-run instead of being served from the build cache forever; CI passes the build
+# date so each day's first build picks up new patches.
+ARG CACHE_BUST=dev
+RUN echo "apk cache bust: ${CACHE_BUST}" && apk upgrade --no-cache
+
+# Set from the release git tag (see .github/workflows/docker-publish.yml);
+# "dev" for a plain local `docker build`.
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Hullpatch API" \
+      org.opencontainers.image.description="HTTP API that repairs STL and 3MF files with the same engine as Hullpatch" \
+      org.opencontainers.image.source="https://github.com/hibikipr/hullpatch" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="${VERSION}"
+
+ENV NODE_ENV=production \
+    PORT=8081 \
+    HULLPATCH_VERSION="${VERSION}"
+
+WORKDIR /app
+# package.json is needed at runtime for "type": "module" (the code is ESM).
+# Files stay root-owned and read-only to the node user; everything lives in memory.
+COPY package.json package-lock.json ./
+COPY --from=deps /deps/node_modules ./node_modules
+COPY src/repair ./src/repair
+COPY server ./server
+
+# uid 1000 (the base image's "node" user)
+USER 1000
+EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/api/v1/health"]
+
+CMD ["node", "server/index.js"]

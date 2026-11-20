@@ -1,65 +1,11 @@
 // Runs the repair off the main thread: read, scan, repair, then scan the result again.
-import { parseStl, weld, analyze, repair, writeStl, toTriangles, nakedSegments, meshVolume, orientedVolume, problemFaces, StlError } from './mesh.js';
-import { parse3mf, transformVerts, ThreeMfError, write3mf } from './threemf.js';
+// The pipeline itself lives in pipeline.js (shared with the HTTP server); this file only
+// turns its hooks into messages and builds the extra data the 3D views want.
+import { writeStl, toTriangles, nakedSegments, problemFaces } from './mesh.js';
+import { is3mf, repairStl, open3mf, repair3mf, StlError, ThreeMfError } from './pipeline.js';
 
 // Draw every triangle up to this many; bigger meshes are sampled for the pictures.
 const PREVIEW_TRIS = 1000000;
-
-const is3mf = (buffer, name) => {
-  if (/\.3mf$/i.test(name || '')) return true;
-  const b = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
-  return b.length === 4 && b[0] === 0x50 && b[1] === 0x4b && b[2] === 3 && b[3] === 4; // PK\x03\x04
-};
-
-// Indexed mesh -> triangle soup, optionally placed; a mirror flips winding so faces still point out.
-function soupOf(verts, faces, m) {
-  const v = m ? transformVerts(verts, m) : verts;
-  const flip = m && m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]) < 0;
-  const out = new Float64Array(faces.length * 3);
-  for (let i = 0; i < faces.length; i += 3) {
-    const a = faces[i], b = faces[i + (flip ? 2 : 1)], c = faces[i + (flip ? 1 : 2)];
-    out.set(v.subarray(a * 3, a * 3 + 3), i * 3);
-    out.set(v.subarray(b * 3, b * 3 + 3), i * 3 + 3);
-    out.set(v.subarray(c * 3, c * 3 + 3), i * 3 + 6);
-  }
-  return out;
-}
-
-// Every normal object at every place it is printed, in file units, as one welded mesh (display only).
-function assemble(objs, meshes) {
-  const parts = [];
-  let n = 0;
-  for (const o of objs) {
-    const mesh = meshes.get(o.key);
-    for (const m of o.placements) {
-      const s = soupOf(mesh.verts, mesh.faces, m);
-      parts.push(s);
-      n += s.length;
-    }
-  }
-  const all = new Float64Array(n);
-  let at = 0;
-  for (const s of parts) { all.set(s, at); at += s.length; }
-  return weld(all);
-}
-
-const problemCount = (a) => a.NakedEdges + a.NonManifoldEdges + a.InvertedNormals + a.OrientationConflicts + a.DuplicateFaces + a.DegenerateFaces;
-
-// Readout counts for a 3MF: each object's own analysis, once per place it is printed.
-// Not the assembled mesh: welding everything by position would rejoin edges the repair
-// split on purpose (a 3MF keeps them apart by index) and merge parts that only touch.
-function sumAnalyses(objs, analyses) {
-  const total = {};
-  let shells = 0;
-  for (const o of objs) {
-    const a = analyses.get(o.key);
-    const n = o.placements.length;
-    for (const k in a) if (typeof a[k] === 'number' && k !== 'DisjointShells') total[k] = (total[k] || 0) + a[k] * n;
-    shells += (a.DisjointShells || 1) * n;
-  }
-  total.DisjointShells = shells > 1 ? shells : 0;
-  return total;
-}
 
 // The next message of type `type`; anything else sent meanwhile is ignored.
 function waitFor(type) {
@@ -73,9 +19,8 @@ function waitFor(type) {
   });
 }
 
-// Scan a mesh for the 3D "before" view: counts, picture, hole outlines and a problem flag per face.
-function scanMessage(mesh, send, extra, counts) {
-  const before = counts || analyze(mesh);
+// The "before" scan for the 3D view: counts, picture, hole outlines and a problem flag per face.
+function scanMessage(send, { mesh, analysis, ...extra }) {
   const beforeTris = toTriangles(mesh, PREVIEW_TRIS);
   const holes = nakedSegments(mesh);
   // The welded mesh plus a problem flag per face, for the coloured 3D "before" view.
@@ -85,103 +30,52 @@ function scanMessage(mesh, send, extra, counts) {
     flags: problemFaces(mesh),
   };
   send(
-    { type: 'analysis', analysis: before, before: beforeTris, holes, problems, ...extra },
+    { type: 'analysis', analysis, before: beforeTris, holes, problems, ...extra },
     [beforeTris.buffer, holes.buffer, problems.verts.buffer, problems.faces.buffer, problems.flags.buffer],
   );
-  return before;
 }
 
 async function run3mf(buffer, send) {
   send({ type: 'stage', stage: 'read' });
-  const parsed = parse3mf(buffer);
-  const objs = parsed.objects.filter((o) => o.kind === 'normal');
-  if (!objs.length) throw new ThreeMfError('this 3mf file has no printable mesh objects');
+  const opened = open3mf(buffer);
 
-  // Each object on its own, in its own coordinates (triangle order = file order).
-  const meshes = new Map();
-  const scans = new Map();
-  for (const o of objs) {
-    const mesh = weld(soupOf(o.verts, o.faces, null));
-    meshes.set(o.key, mesh);
-    scans.set(o.key, analyze(mesh));
-  }
-
-  let chosen = objs.map((o) => o.key);
-  if (objs.length > 1) {
-    send({
-      type: 'objects',
-      groups: new Set(objs.map((o) => o.group)).size,
-      objects: objs.map((o) => ({ key: o.key, name: o.name, group: o.group, plate: o.plate, triangles: o.faces.length / 3, problems: problemCount(scans.get(o.key)) })),
-    });
+  let chosen = opened.objs.map((o) => o.key);
+  if (opened.objs.length > 1) {
+    send({ type: 'objects', groups: opened.groups, objects: opened.objects });
     const msg = await waitFor('choose');
-    const known = new Set(objs.map((o) => o.key));
-    chosen = (msg.keys || []).filter((k) => known.has(k));
+    chosen = msg.keys || [];
   }
 
-  send({ type: 'stage', stage: 'scan' });
-  const beforeMesh = assemble(objs, meshes);
-  const before = scanMessage(beforeMesh, send, { format: '3mf', unit: parsed.unit, objectCount: objs.length, chosen: chosen.length }, sumAnalyses(objs, scans));
-  const volumeBefore = orientedVolume(beforeMesh);
-  const beforeStl = writeStl(beforeMesh, 'hullpatch before');
-
-  send({ type: 'stage', stage: 'repair' });
-  const t0 = performance.now();
-  const byKey = new Map(objs.map((o) => [o.key, o]));
-  const total = chosen.reduce((s, k) => s + byKey.get(k).faces.length, 0) || 1;
-  const results = new Map();
-  const fixedMeshes = new Map(meshes);
-  let done = 0, last = 0;
-  for (const key of chosen) {
-    const w = byKey.get(key).faces.length;
-    const res = repair(meshes.get(key), (p) => {
-      last = Math.max(last, (done + w * p) / total); // keep it monotonic across objects
-      send({ type: 'progress', progress: last });
-    });
-    done += w;
-    results.set(key, res);
-    fixedMeshes.set(key, res);
-  }
-  const timeFix = Math.round(performance.now() - t0);
-
-  send({ type: 'stage', stage: 'verify' });
-  const afterMesh = assemble(objs, fixedMeshes);
-  const afterScans = new Map(scans);
-  for (const [key, res] of results) afterScans.set(key, analyze(res));
-  const after = sumAnalyses(objs, afterScans);
-  const volumeAfter = Math.abs(meshVolume(afterMesh));
-  const { bytes, paintLost } = write3mf(parsed, results);
-  const stl = bytes.buffer.byteLength === bytes.byteLength ? bytes.buffer : bytes.slice().buffer;
-  const afterStl = writeStl(afterMesh, 'hullpatch after');
-  const afterTris = toTriangles(afterMesh, PREVIEW_TRIS);
+  let beforeStl;
+  const r = repair3mf(opened, chosen, {
+    onStage: (stage) => send({ type: 'stage', stage }),
+    onProgress: (progress) => send({ type: 'progress', progress }),
+    onScan: (scan) => {
+      scanMessage(send, scan);
+      beforeStl = writeStl(scan.mesh, 'hullpatch before');
+    },
+  });
+  const stl = r.bytes.buffer.byteLength === r.bytes.byteLength ? r.bytes.buffer : r.bytes.slice().buffer;
+  const afterStl = writeStl(r.afterMesh, 'hullpatch after');
+  const afterTris = toTriangles(r.afterMesh, PREVIEW_TRIS);
 
   send(
-    { type: 'done', timeFix, before, after, volumeBefore, volumeAfter, stl, afterTris, format: '3mf', paintLost, afterStl, beforeStl },
+    { type: 'done', timeFix: r.timeFix, before: r.before, after: r.after, volumeBefore: r.volumeBefore, volumeAfter: r.volumeAfter, stl, afterTris, format: '3mf', paintLost: r.paintLost, afterStl, beforeStl },
     [stl, afterTris.buffer, afterStl, beforeStl],
   );
 }
 
 function runStl(buffer, name, send) {
-  send({ type: 'stage', stage: 'read' });
-  const mesh = weld(parseStl(buffer));
-
-  send({ type: 'stage', stage: 'scan' });
-  const volumeBefore = orientedVolume(mesh);
-  const before = scanMessage(mesh, send, { format: 'stl' });
-
-  send({ type: 'stage', stage: 'repair' });
-  const t0 = performance.now();
-  const fixed = repair(mesh, (p) => send({ type: 'progress', progress: p }));
-  const timeFix = Math.round(performance.now() - t0);
-
-  send({ type: 'stage', stage: 'verify' });
-  const after = analyze(fixed);
-  const volumeAfter = Math.abs(meshVolume(fixed));
-  const stl = writeStl(fixed, ('hullpatch: ' + name).slice(0, 80));
-  const afterTris = toTriangles(fixed, PREVIEW_TRIS);
-
+  const r = repairStl(buffer, {
+    name,
+    onStage: (stage) => send({ type: 'stage', stage }),
+    onProgress: (progress) => send({ type: 'progress', progress }),
+    onScan: (scan) => scanMessage(send, scan),
+  });
+  const afterTris = toTriangles(r.fixed, PREVIEW_TRIS);
   send(
-    { type: 'done', timeFix, before, after, volumeBefore, volumeAfter, stl, afterTris, format: 'stl' },
-    [stl, afterTris.buffer],
+    { type: 'done', timeFix: r.timeFix, before: r.before, after: r.after, volumeBefore: r.volumeBefore, volumeAfter: r.volumeAfter, stl: r.stl, afterTris, format: 'stl' },
+    [r.stl, afterTris.buffer],
   );
 }
 

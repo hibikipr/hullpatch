@@ -1,5 +1,6 @@
-name: Build and publish image
+name: Build and publish images
 
+# Two images: the static site (ghcr.io/<repo>) and the HTTP API (ghcr.io/<repo>-api).
 # main -> :latest (+ :main, :sha-xxxxxxx); a v* release tag -> :1.2.3 and :1.2 too.
 on:
   push:
@@ -13,7 +14,18 @@ env:
 
 jobs:
   build-and-push:
+    name: Publish ${{ matrix.name }} image
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: site
+            dockerfile: Dockerfile
+            suffix: ''
+          - name: api
+            dockerfile: Dockerfile.api
+            suffix: -api
     permissions:
       contents: read
       packages: write
@@ -38,7 +50,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
@@ -62,6 +74,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -69,5 +82,5 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.value }}
             CACHE_BUST=${{ steps.version.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

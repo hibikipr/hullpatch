@@ -7,13 +7,17 @@ permissions:
 
 jobs:
   hadolint:
-    name: Lint Dockerfile
+    name: Lint ${{ matrix.dockerfile }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [Dockerfile, Dockerfile.api]
     steps:
       - uses: actions/checkout@v7
       - uses: hadolint/hadolint-action@v3.5.0
         with:
-          dockerfile: Dockerfile
+          dockerfile: ${{ matrix.dockerfile }}
 
   build-and-smoke-test:
     name: Build + run + smoke test
@@ -36,8 +40,8 @@ jobs:
           tags: hullpatch:ci
           build-args: |
             CACHE_BUST=${{ steps.cachebust.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=site
+          cache-to: type=gha,mode=max,scope=site
 
       # Same hardening as docker-compose.yml, so a config that needs a writable
       # filesystem or extra privileges fails here rather than in production.
@@ -95,10 +99,159 @@ jobs:
         if: always()
         run: docker rm -f smoke-test
 
-  trivy:
-    name: Scan image for vulnerabilities
+  api-build-and-smoke-test:
+    name: API build + run + smoke test
     runs-on: ubuntu-latest
-    needs: build-and-smoke-test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Compute daily cache-bust value
+        id: cachebust
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.api
+          load: true
+          tags: hullpatch-api:ci
+          build-args: |
+            VERSION=ci
+            CACHE_BUST=${{ steps.cachebust.outputs.date }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # Same hardening as docker-compose.yml. With a read-only filesystem, any write
+      # outside /tmp makes the server fail here instead of in production.
+      - name: Run container with an API key
+        run: |
+          docker run -d --name api-smoke -p 8081:8081 \
+            -e HULLPATCH_API_KEYS=test-key \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            hullpatch-api:ci
+
+      - name: Run container with no API keys configured
+        run: |
+          docker run -d --name api-smoke-nokeys -p 8082:8081 \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            hullpatch-api:ci
+
+      - name: Wait for both containers to respond
+        run: |
+          for target in "api-smoke 8081" "api-smoke-nokeys 8082"; do
+            set -- $target
+            ok=0
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null "http://localhost:$2/api/v1/health"; then
+                echo "$1 responded after ${i}s"
+                ok=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ok" != 1 ]; then
+              echo "$1 never answered GET /api/v1/health within 30s"
+              docker logs "$1"
+              exit 1
+            fi
+          done
+
+      # A cube with one triangle removed: a 3-edge hole the repair must fill.
+      - name: Generate a broken STL
+        run: |
+          node -e '
+            const fs = require("fs");
+            const tris = [
+              [[0,0,0],[0,1,0],[1,1,0]], [[0,0,0],[1,1,0],[1,0,0]],
+              [[0,0,1],[1,0,1],[1,1,1]], [[0,0,1],[1,1,1],[0,1,1]],
+              [[0,0,0],[1,0,0],[1,0,1]], [[0,0,0],[1,0,1],[0,0,1]],
+              [[0,1,0],[0,1,1],[1,1,1]], [[0,1,0],[1,1,1],[1,1,0]],
+              [[0,0,0],[0,0,1],[0,1,1]], [[0,0,0],[0,1,1],[0,1,0]],
+              [[1,0,0],[1,1,0],[1,1,1]],
+              // [[1,0,0],[1,1,1],[1,0,1]] is left out on purpose
+            ];
+            const buf = Buffer.alloc(84 + 50 * tris.length);
+            buf.writeUInt32LE(tris.length, 80);
+            tris.forEach((t, i) => {
+              let o = 84 + 50 * i + 12; // normals stay 0; the repair recomputes them
+              for (const v of t) for (const c of v) { buf.writeFloatLE(c, o); o += 4; }
+            });
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/broken.stl", buf);
+          '
+          ls -l "$RUNNER_TEMP/broken.stl"
+
+      - name: Check health, auth and repair
+        run: |
+          fail() { echo "FAIL: $1"; docker logs api-smoke; exit 1; }
+          stl="$RUNNER_TEMP/broken.stl"
+          url=http://localhost:8081/api/v1
+
+          health=$(curl -fsS "$url/health") || fail "GET /health failed"
+          echo "health: $health"
+          echo "$health" | grep -q '"status":"ok"' || fail "health body lacks status ok"
+          echo "$health" | grep -q '"keys":true' || fail "health should report keys:true when HULLPATCH_API_KEYS is set"
+          echo "$health" | grep -q '"version":"ci"' || fail "health should report the VERSION build-arg (ci)"
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: model/stl' --data-binary "@$stl" "$url/repair")
+          [ "$code" = "401" ] || fail "POST /repair without a key returned $code, expected 401"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer wrong-key' -H 'Content-Type: model/stl' --data-binary "@$stl" "$url/repair")
+          [ "$code" = "401" ] || fail "POST /repair with a wrong key returned $code, expected 401"
+
+          code=$(curl -s -D "$RUNNER_TEMP/headers.txt" -o "$RUNNER_TEMP/fixed.stl" -w '%{http_code}' \
+            -X POST -H 'Authorization: Bearer test-key' -H 'Content-Type: model/stl' \
+            --data-binary "@$stl" "$url/repair")
+          cat "$RUNNER_TEMP/headers.txt"
+          [ "$code" = "200" ] || fail "POST /repair with the key returned $code, expected 200"
+          grep -i '^hullpatch-report:' "$RUNNER_TEMP/headers.txt" | grep -q 'watertight=1' \
+            || fail "Hullpatch-Report header missing or not watertight=1"
+
+          # Binary STL: 80-byte header + uint32 count + 50 bytes per triangle. The
+          # repaired cube must be closed again, so at least its 12 triangles.
+          RUNNER_FIXED="$RUNNER_TEMP/fixed.stl" node -e '
+            const b = require("fs").readFileSync(process.env.RUNNER_FIXED);
+            if (b.length < 84) { console.error("body is only " + b.length + " bytes"); process.exit(1); }
+            const n = b.readUInt32LE(80);
+            if (b.length !== 84 + 50 * n) { console.error("size " + b.length + " does not match " + n + " triangles (expected " + (84 + 50 * n) + ")"); process.exit(1); }
+            if (n < 12) { console.error("only " + n + " triangles, a closed cube needs at least 12"); process.exit(1); }
+            console.log("repaired STL OK: " + n + " triangles, " + b.length + " bytes");
+          ' || fail "repaired body is not a valid binary STL of the expected size"
+
+      - name: Check the container without keys
+        run: |
+          fail() { echo "FAIL: $1"; docker logs api-smoke-nokeys; exit 1; }
+          health=$(curl -fsS http://localhost:8082/api/v1/health) || fail "GET /health failed"
+          echo "health: $health"
+          echo "$health" | grep -q '"keys":false' || fail "health should report keys:false with no keys configured"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer test-key' \
+            -H 'Content-Type: model/stl' --data-binary "@$RUNNER_TEMP/broken.stl" http://localhost:8082/api/v1/repair)
+          [ "$code" = "503" ] || fail "POST /repair with no keys configured returned $code, expected 503"
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          docker logs api-smoke || true
+          docker logs api-smoke-nokeys || true
+
+      - name: Stop containers
+        if: always()
+        run: docker rm -f api-smoke api-smoke-nokeys
+
+  trivy:
+    name: Scan ${{ matrix.name }} image for vulnerabilities
+    runs-on: ubuntu-latest
+    needs: [build-and-smoke-test, api-build-and-smoke-test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: site
+            dockerfile: Dockerfile
+            tag: hullpatch:ci
+          - name: api
+            dockerfile: Dockerfile.api
+            tag: hullpatch-api:ci
     permissions:
       contents: read
       security-events: write
@@ -114,18 +267,19 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           load: true
-          tags: hullpatch:ci
+          tags: ${{ matrix.tag }}
           build-args: |
             CACHE_BUST=${{ steps.cachebust.outputs.date }}
-          cache-from: type=gha
+          cache-from: type=gha,scope=${{ matrix.name }}
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: hullpatch:ci
+          image-ref: ${{ matrix.tag }}
           format: sarif
-          output: trivy-results.sarif
+          output: trivy-${{ matrix.name }}.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 
@@ -133,4 +287,5 @@ jobs:
         if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: trivy-results.sarif
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}

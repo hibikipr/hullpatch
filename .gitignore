@@ -13,6 +13,9 @@ dist/
 .idea/
 .claude/
 
+# API keys for the hullpatch-api compose secret
+api-keys.txt
+
 # Test meshes
 *.stl
 *.3mf

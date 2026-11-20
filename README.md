@@ -42,6 +42,120 @@ Images are multi-arch (amd64 + arm64) on GHCR:
 | `1.2.3`, `1.2` | a `v1.2.3` release tag |
 | `sha-abc1234` | every build |
 
+## HTTP API (optional)
+
+For scripts and programs there is a separate HTTP API that repairs files on your own
+server. It is a second service with its own image (`ghcr.io/hibikipr/hullpatch-api`,
+built from `Dockerfile.api`) and only runs if you deploy it. The page itself still never
+uploads anything, and it never uses the API.
+
+Unlike the page, the API receives your file and repairs it in memory on the server.
+Nothing is written to disk, and logs hold sizes, timings and counts, never file contents
+or keys.
+
+### Run it
+
+1. Put one API key per line in `api-keys.txt` next to `docker-compose.yml` (lines
+   starting with `#` are comments). The file is gitignored.
+2. Start the service: `docker compose up -d hullpatch-api` (port 8081).
+
+With no keys configured the API answers 503 "API disabled", so it fails closed.
+A 150 MB mesh can need around 2 GB of memory while it is repaired, per concurrent job.
+
+### Endpoints
+
+| Endpoint | What it does |
+|---|---|
+| `GET /api/v1/health` | No key needed. Returns `{"status":"ok","version":…,"keys":true}`. |
+| `POST /api/v1/repair` | Returns the repaired file in the same format (`<name>_fixed.stl` or `.3mf`). |
+| `POST /api/v1/analyze` | Returns problem counts as JSON (and the parts of a 3MF) without repairing. |
+
+Send the key as `Authorization: Bearer <key>`. Send the file as the raw body with
+`Content-Type: model/stl` or `model/3mf` (or `application/octet-stream`, and the format is
+detected), or as a multipart form with a `file` field. `?name=part.stl` names a raw upload.
+The limit is 150 MB.
+
+On `/repair`:
+
+- `?format=stl` turns a 3MF into an STL of the whole model.
+- A 3MF repairs only the parts with problems by default; `?parts=all` repairs every normal part.
+- `?report=json` returns JSON (`before`, `after`, volumes, `watertight`, `filename`, `format`,
+  and the file as base64).
+
+Every `/repair` response has a `Hullpatch-Report` header, for example
+`open=0; nonmanifold=0; flipped=0; conflicts=0; watertight=1`.
+
+### Examples
+
+Repair a raw STL and save the result:
+
+```bash
+curl -fsS -X POST https://stlrepair.townsville.cc/api/v1/repair \
+  -H "Authorization: Bearer $HULLPATCH_KEY" \
+  -H "Content-Type: model/stl" \
+  --data-binary @part.stl \
+  -o part_fixed.stl
+```
+
+Same thing as a multipart form:
+
+```bash
+curl -fsS -X POST https://stlrepair.townsville.cc/api/v1/repair \
+  -H "Authorization: Bearer $HULLPATCH_KEY" \
+  -F "file=@part.stl" \
+  -o part_fixed.stl
+```
+
+Turn a whole 3MF into an STL:
+
+```bash
+curl -fsS -X POST "https://stlrepair.townsville.cc/api/v1/repair?format=stl" \
+  -H "Authorization: Bearer $HULLPATCH_KEY" \
+  -H "Content-Type: model/3mf" \
+  --data-binary @plate.3mf \
+  -o plate_fixed.stl
+```
+
+Check the result in a script:
+
+```bash
+curl -fsS -D - -o /dev/null -X POST https://stlrepair.townsville.cc/api/v1/repair \
+  -H "Authorization: Bearer $HULLPATCH_KEY" \
+  -H "Content-Type: model/stl" \
+  --data-binary @part.stl | grep -i hullpatch-report
+```
+
+### Errors
+
+| Status | Meaning |
+|---|---|
+| 400 | Empty body, empty file part, bad `format` or `parts` value. |
+| 401 | Missing or wrong key. |
+| 405 | Wrong method. |
+| 413 | Larger than the limit. |
+| 422 | File can't be read (`{"error": …}`), or the output can't be made, such as `?format=3mf` on an STL. |
+| 429 | Queue full. Wait for `Retry-After` and try again. |
+| 503 | API disabled, or the repair took too long. |
+
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HULLPATCH_API_KEYS` | none | Comma-separated keys. |
+| `HULLPATCH_API_KEYS_FILE` | none | File with one key per line. Used with or instead of the list above. |
+| `HULLPATCH_API_CONCURRENCY` | 2 | Repairs running at once. |
+| `HULLPATCH_API_QUEUE` | 4 | Requests allowed to wait behind them. |
+| `HULLPATCH_API_MAX_BYTES` | 150 MB | Upload limit. |
+| `HULLPATCH_API_TIMEOUT_MS` | 240000 | A repair that runs longer returns 503. |
+| `PORT` | 8081 | Listen port. |
+
+### Behind Nginx Proxy Manager
+
+`docker/npm-api-location.conf` has the settings. Add a custom location `/api/` on the
+Hullpatch site that forwards to `hullpatch-api:8081`, and paste the directives in. They
+raise the upload limit to 160 MB and the timeouts to 300 s. Keep the sign-in proxy
+(tinyauth) off `/api/`: scripts can't sign in, so the API key is the only gate.
+
 ## Develop
 
 ```bash
@@ -62,6 +176,7 @@ npm run test:repair # repair engine tests
   runs in the worker and in Node tests): resolves production-extension components,
   transforms, units and Bambu part types; the writer copies every zip entry and swaps
   only the repaired objects' vertices and triangles.
+- `src/repair/pipeline.js`: the read → scan → repair → write steps shared by the page's worker and the API.
 - `src/repair/worker.js`: runs read → scan → repair → re-check off the main thread. For a
   3MF it repairs each object on its own and asks the page which objects to repair when
   there are several.
@@ -80,6 +195,7 @@ npm run test:repair # repair engine tests
 - `public/site.webmanifest`: app name, icons, `.stl` file handler and share target.
 - `Dockerfile`, `docker/`: Node build stage, then non-root nginx with gzip,
   long-lived caching for hashed assets, security headers and `/healthz`.
+- `server/`: the optional HTTP API (node:http, worker_threads pool). See "HTTP API (optional)".
 - `scripts/test-repair.mjs`: builds broken meshes and checks the repair fixes them.
 
 ## What the repair does
