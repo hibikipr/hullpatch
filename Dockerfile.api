@@ -8,7 +8,7 @@
 # package.json (fonts, f3d) are for the static site build, so install from the lockfile
 # (integrity-checked, no scripts) and then drop everything except fflate. fflate is pure
 # JavaScript, so building once on the runner's own architecture is fine for every platform.
-FROM --platform=$BUILDPLATFORM node:25-alpine AS deps
+FROM --platform=$BUILDPLATFORM node:26-alpine AS deps
 WORKDIR /deps
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
@@ -16,7 +16,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && test -f node_modules/fflate/package.json
 
 # ---- Run: same Node major as the build stage of Dockerfile.
-FROM node:25-alpine
+FROM node:26-alpine
 
 # The base image's packages can lag security fixes. CACHE_BUST makes this layer
 # re-run instead of being served from the build cache forever; CI passes the build
