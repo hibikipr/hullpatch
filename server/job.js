@@ -26,7 +26,7 @@ function work({ op, format, buffer, name, parts, outFormat }) {
   const opened = open3mf(buffer, { limits });
   const keys = (parts === 'all' ? opened.objects : opened.objects.filter((o) => o.problems > 0)).map((o) => o.key);
   const r = repair3mf(opened, keys);
-  const file = outFormat === 'stl' ? writeStl(r.afterMesh, ('hullpatch: ' + name).slice(0, 80)) : exact(r.bytes);
+  const file = outFormat === 'stl' ? writeStl(r.afterMesh, 'hullpatch: ' + name) : exact(r.bytes);
   return { format, outFormat: outFormat === 'stl' ? 'stl' : '3mf', before: r.before, after: r.after, volumeBefore: r.volumeBefore, volumeAfter: r.volumeAfter, watertight: r.watertight, paintLost: r.paintLost, file };
 }
 

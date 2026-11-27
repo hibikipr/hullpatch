@@ -496,5 +496,22 @@ const turnedPair = (deg, s = 1) => {
   check('stl order: provenance follows the reordered faces', [...r.origin].every((o, f) => [0, 1, 2].every((k) => pos(r.faces[f * 3 + k]) === Array.from(mesh.verts.subarray(mesh.faces[o * 3 + r.corner[f * 3 + k]] * 3, mesh.faces[o * 3 + r.corner[f * 3 + k]] * 3 + 3)).join(','))));
 }
 
+// STL header: 80 BYTES of UTF-8. A name longer in bytes than in characters (CJK, emoji,
+// accents) used to overflow it and throw; now it is cut at a character boundary.
+{
+  const m = weld(new Float64Array([0, 0, 0, 1, 0, 0, 0, 1, 0]));
+  let okAll = true;
+  for (const name of ['ピノキオの帽子のパーツ'.repeat(3), '🦊'.repeat(40), 'é'.repeat(100)]) {
+    try {
+      const buf = writeStl(m, 'hullpatch: ' + name);
+      const head = new Uint8Array(buf, 0, 80);
+      const end = head.indexOf(0) < 0 ? 80 : head.indexOf(0);
+      new TextDecoder('utf-8', { fatal: true }).decode(head.subarray(0, end)); // throws on a cut character
+      if (parseStl(buf).length !== 9) okAll = false;
+    } catch { okAll = false; }
+  }
+  check('stl header: long multi-byte names fit in 80 bytes as valid UTF-8', okAll);
+}
+
 console.log(ok ? 'PASS' : 'FAIL');
 process.exit(ok ? 0 : 1);
