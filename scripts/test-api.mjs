@@ -205,6 +205,11 @@ try {
   const v = await mk({});
   const w = await post(v.port, '/api/v1/repair', threeMf, 'model/stl');
   check2('api: a 3MF sent as model/stl is still repaired as a 3MF', w.status === 200 && w.headers['content-type'] === 'model/3mf' && w.body[0] === 0x50 && w.body[1] === 0x4b);
+  // A long multi-byte name goes into the STL header; it used to overflow it and give a 500.
+  const longName = encodeURIComponent('🦊'.repeat(40) + '.stl');
+  const x = await post(v.port, '/api/v1/repair?name=' + longName, stl, 'model/stl');
+  const y = await post(v.port, '/api/v1/repair?format=stl&name=' + encodeURIComponent('ピノキオの帽子'.repeat(6) + '.3mf'), threeMf, 'model/3mf');
+  check2('api: long multi-byte file names repair (STL and 3MF to STL)', x.status === 200 && y.status === 200 && y.headers['content-type'] === 'model/stl');
   await v.api.close(500);
 }
 

@@ -1288,12 +1288,22 @@ export function orientedVolume(mesh) {
 /* ------------------------------------------------------------------ */
 
 /** Binary STL with freshly computed facet normals. */
+// The 80-byte header of a binary STL as UTF-8, cut to 80 BYTES (a name with accents,
+// CJK or emoji is longer in bytes than in characters), never in the middle of a character.
+function stlHeaderBytes(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= 80) return bytes;
+  let n = 80;
+  while (n > 0 && (bytes[n] & 0xc0) === 0x80) n--; // back up to the start of the cut character
+  return bytes.subarray(0, n);
+}
+
 export function writeStl(mesh, header = 'repaired in the browser') {
   const { verts, faces } = mesh;
   const F = faces.length / 3;
   const buf = new ArrayBuffer(84 + F * 50);
   const view = new DataView(buf);
-  new Uint8Array(buf, 0, 80).set(new TextEncoder().encode(header.slice(0, 80)));
+  new Uint8Array(buf, 0, 80).set(stlHeaderBytes(header));
   view.setUint32(80, F, true);
   let o = 84;
   for (let f = 0; f < F; f++) {

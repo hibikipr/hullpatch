@@ -147,7 +147,7 @@ export function repairStl(buffer, { name = 'model.stl', limits, onStage = noop, 
   onStage('verify');
   const after = analyze(fixed);
   const volumeAfter = Math.abs(meshVolume(fixed));
-  const stl = writeStl(fixed, ('hullpatch: ' + name).slice(0, 80));
+  const stl = writeStl(fixed, 'hullpatch: ' + name);
   return { format: 'stl', timeFix, before, after, volumeBefore, volumeAfter, stl, fixed, watertight: isWatertight(after) };
 }
 
